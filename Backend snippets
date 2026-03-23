@@ -1,7 +1,7 @@
-## Models
+# Models
 # Table for user
 
-### Models (user.py)
+## Models (user.py)
 class User(Base):
     __tablename__ = "users"
 
@@ -109,4 +109,32 @@ class Product(Base):
     category = relationship("Category")
 
 
+## SCHEMAS (user.py)
+from pydantic import BaseModel, EmailStr, UUID4, Field
+from typing import Optional
+from datetime import datetime
 
+
+class UserBase(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    email: EmailStr
+
+
+class UserRegister(UserBase):
+    name: str  # required at registration
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserLoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserResponse(UserBase):
+    id: UUID4
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    is_active: bool = True
+
+    class Config:
+        from_attributes = True
