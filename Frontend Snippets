@@ -14,6 +14,11 @@
   --color-accent-orange-600: #E88E18;
   --color-accent-terra: #C46D3B;
 
+  --color-accent-orange: #FF9F1C;       /* base */
+  --color-accent-orange-600: #E88E18;   /* hover */
+  --color-accent-orange-700: #C77712;   /* active */
+  --color-accent-orange-800: #9F5F0E;   /* TEXT SAFE */
+
   /* ===== Supporting ===== */
   --color-secondary-soft: #A3B18A;
 
