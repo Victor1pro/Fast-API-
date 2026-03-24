@@ -1,629 +1,245 @@
-# Models
-# Table for user
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
+from sqlalchemy.orm import Session
+from models import User
+from schemas import UserCreate
+from database import get_db
+from utils import hash_password
 
-## Models (user.py)
-class User(Base):
-    __tablename__ = "users"
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+@router.post("/register")
+def register_user(user: UserCreate, db: Session = Depends(get_db)):
+    # Check if email exists
+    existing = db.query(User).filter(User.email == user.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already exists")
 
-    created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
-    updated_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    # Hash password
+    hashed_pw = hash_password(user.password)
 
-
-Table for Catergory
-class Category(Base):
-    __tablename__ = "categories"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    description: Mapped[str | None] = mapped_column(String(255), nullable = False)
-
-
-Table for User Address
-class Address(Base):
-    __tablename__ = "addresses"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
-    line1: Mapped[str] = mapped_column(String(255), nullable=False)
-    city: Mapped[str] = mapped_column(String(100), nullable=False)
-    postal_code: Mapped[str] = mapped_column(String(20), nullable=False)
-    country: Mapped[str] = mapped_column(String(100), nullable=False)
-
-
-Models (cart.py)
-class Cart(Base):
-    __tablename__ = "carts"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
-    created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
-
-    items = relationship("CartItem", back_populates="cart")
-
-
-class CartItem(Base):
-    __tablename__ = "cart_items"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-
-    cart_id: Mapped[str] = mapped_column(String(36), ForeignKey("carts.id"), index=True)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id"), index=True)
-    quantity: Mapped[int] = mapped_column(Integer, default=1)
-
-    cart = relationship("Cart", back_populates="items")
-    product = relationship("Product")
-
-
-Models (order_model.py)
-# Table for Order
-class Order(Base):
-    __tablename__ = "orders"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
-    total_amount: Mapped[float] = mapped_column(Float, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), default="pending")
-
-    created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
-    updated_at: Mapped[str] = mapped_column(
-        TIMESTAMP, server_default=func.now(), onupdate=func.now()
+    # Create user
+    new_user = User(
+        email=user.email,
+        password=hashed_pw,
+        full_name=user.full_name
     )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
 
-    items = relationship("OrderItem", back_populates="order")
+    # Redirect to login page
+    return RedirectResponse(url="/auth/login", status_code=303)
 
+from utils import verify_password
+from fastapi.responses import RedirectResponse
 
-# Table for OrderItem
-class OrderItem(Base):
-    __tablename__ = "order_items"
+@router.post("/login")
+def login_user(user: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user.email).first()
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    order_id: Mapped[str] = mapped_column(String(36), ForeignKey("orders.id"), index=True)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id"), index=True)
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
-    price_at_purchase: Mapped[float] = mapped_column(Float, nullable=False)
+    if not db_user:
+        raise HTTPException(status_code=400, detail="Invalid email or password")
 
-    created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
+    if not verify_password(user.password, db_user.password):
+        raise HTTPException(status_code=400, detail="Invalid email or password")
 
-    order = relationship("Order", back_populates="items")
-    product = relationship("Product")
+    # Normally you'd generate a JWT here
+    # token = create_access_token({"sub": db_user.email})
 
+    return {"message": "Login successful"}
 
-# Table for Product
-class Product(Base):
-    __tablename__ = "products"
+### Naming convnetions
+📦 1. Products Router
+Handles everything related to products.
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    image_url: Mapped[str] = mapped_column(String(300), nullable=False)
-    name: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
-    description: Mapped[str] = mapped_column(String(500), nullable = False)
-    price: Mapped[float] = mapped_column(Float, nullable=False)
-    stock: Mapped[int] = mapped_column(Integer, default=0)
+Common routes
+GET /products — list all products
 
-    category_id: Mapped[str] = mapped_column(String(36), ForeignKey("categories.id"), index=True)
-    category = relationship("Category")
+GET /products/{product_id} — get product details
 
+POST /products — create a new product
 
-## SCHEMAS (user.py)
-from pydantic import BaseModel, EmailStr, UUID4, Field
-from typing import Optional
-from datetime import datetime
+PUT /products/{product_id} — update product
 
+DELETE /products/{product_id} — delete product
+
+GET /products/search — search by name, category, etc.
+
+GET /products/{product_id}/reviews — fetch reviews for a product
+
+🏷️ 2. Categories Router
+Useful for filtering and organizing products.
+
+Routes
+GET /categories
+
+POST /categories
+
+GET /categories/{category_id}
+
+PUT /categories/{category_id}
+
+DELETE /categories/{category_id}
+
+GET /categories/{category_id}/products
+
+👤 3. Users Router
+Handles user accounts.
+
+Routes
+POST /users/register
+
+POST /users/login
+
+GET /users/me — get current user
+
+PUT /users/me — update profile
+
+GET /users/{user_id} — admin only
+
+🛍️ 4. Cart Router
+Every user has a shopping cart.
+
+Routes
+GET /cart — get current user’s cart
+
+POST /cart/add — add item
+
+PUT /cart/update — change quantity
+
+DELETE /cart/remove/{item_id}
+
+DELETE /cart/clear
+
+💳 5. Orders Router
+Handles checkout and order history.
+
+Routes
+POST /orders — create order from cart
+
+GET /orders — list user’s orders
+
+GET /orders/{order_id}
+
+PUT /orders/{order_id}/status — admin updates status
+
+⭐ 6. Reviews Router
+Optional but common.
+
+Routes
+POST /reviews
+
+GET /reviews/{review_id}
+
+DELETE /reviews/{review_id}
+
+📦 7. Inventory Router (optional)
+If you want admin‑level stock management.
+
+Routes
+GET /inventory
+
+PUT /inventory/{product_id} — update stock
+
+User Schemas
+python
+from pydantic import BaseModel, EmailStr
 
 class UserBase(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
     email: EmailStr
+    full_name: str | None = None
 
+class UserCreate(UserBase):
+    password: str
 
-class UserRegister(UserBase):
-    name: str  # required at registration
-    password: str = Field(min_length=8, max_length=128)
-
-
-class UserLoginRequest(BaseModel):
+class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-
 class UserResponse(UserBase):
-    id: UUID4
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    is_active: bool = True
+    id: int
 
     class Config:
-        from_attributes = True
+        orm_mode = True
+📦 Product Schemas
+python
+class ProductBase(BaseModel):
+    name: str
+    description: str | None = None
+    price: float
+    category_id: int
 
+class ProductCreate(ProductBase):
+    pass
 
-SEED FOLDER 
-catergory_seed.py
+class ProductResponse(ProductBase):
+    id: int
 
-from app.database import SessionLocal
-from app.models.user import catergory
+    class Config:
+        orm_mode = True
+🏷️ Category Schemas
+python
+class CategoryBase(BaseModel):
+    name: str
 
-categories = [
-    {"id": "fruit", "name": "Fruit"},
-    {"id": "vegetables", "name": "Vegetables"},
-    {"id": "dairy", "name": "Dairy"},
-    {"id": "bakery", "name": "Bakery"},
-    {"id": "drinks", "name": "Drinks"},
-    {"id": "pantry", "name": "Pantry"},
-]
+class CategoryCreate(CategoryBase):
+    pass
 
+class CategoryResponse(CategoryBase):
+    id: int
 
-product_seed.py
-from app.database import SessionLocal
-from app.models.product import Product
+    class Config:
+        orm_mode = True
+🛒 Cart & CartItem Schemas
+python
+class CartItemBase(BaseModel):
+    product_id: int
+    quantity: int
 
-db = SessionLocal()
+class CartItemCreate(CartItemBase):
+    pass
 
-products = [
+class CartItemResponse(CartItemBase):
+    id: int
+    product: ProductResponse
 
-    # ------
-    # FRUITS
-    # ------
-    {
-        "name": "Fresh Strawberries",
-        "description": "Locally grown sweet strawberries.",
-        "price": 3.50,
-        "stock": 40,
-        "image_url": "/static/images/products/product-001.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Bananas",
-        "description": "Organic ripe bananas.",
-        "price": 1.20,
-        "stock": 60,
-        "image_url": "/static/images/products/product-002.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Watermelon",
-        "description": "Large juicy watermelon.",
-        "price": 4.99,
-        "stock": 20,
-        "image_url": "/static/images/products/product-003.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Blueberries",
-        "description": "Fresh hand‑picked blueberries.",
-        "price": 2.99,
-        "stock": 35,
-        "image_url": "/static/images/products/product-004.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Apples",
-        "description": "Crisp red apples.",
-        "price": 1.80,
-        "stock": 50,
-        "image_url": "/static/images/products/product-005.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Pears",
-        "description": "Sweet conference pears.",
-        "price": 1.60,
-        "stock": 30,
-        "image_url": "/static/images/products/product-006.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Oranges",
-        "description": "Juicy seedless oranges.",
-        "price": 2.20,
-        "stock": 45,
-        "image_url": "/static/images/products/product-007.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Grapes",
-        "description": "Fresh green grapes.",
-        "price": 2.50,
-        "stock": 40,
-        "image_url": "/static/images/products/product-008.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Pineapple",
-        "description": "Sweet tropical pineapple.",
-        "price": 3.20,
-        "stock": 25,
-        "image_url": "/static/images/products/product-009.jpg",
-        "category_id": "fruit"
-    },
-    {
-        "name": "Mango",
-        "description": "Ripe juicy mango.",
-        "price": 2.80,
-        "stock": 30,
-        "image_url": "/static/images/products/product-010.jpg",
-        "category_id": "fruit"
-    },
+    class Config:
+        orm_mode = True
+python
+class CartResponse(BaseModel):
+    id: int
+    user_id: int
+    items: list[CartItemResponse]
 
+    class Config:
+        orm_mode = True
+🧾 Order & OrderItem Schemas
+python
+class OrderItemBase(BaseModel):
+    product_id: int
+    quantity: int
 
-    # --------------
-    # VEGETABLES
-    # --------------
-        {
-        "name": "Carrots",
-        "description": "Crunchy locally grown carrots.",
-        "price": 1.10,
-        "stock": 50,
-        "image_url": "/static/images/products/product-011.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Potatoes",
-        "description": "Fresh white potatoes.",
-        "price": 1.50,
-        "stock": 70,
-        "image_url": "/static/images/products/product-012.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Broccoli",
-        "description": "Fresh green broccoli.",
-        "price": 1.40,
-        "stock": 35,
-        "image_url": "/static/images/products/product-013.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Tomatoes",
-        "description": "Vine‑ripened tomatoes.",
-        "price": 1.90,
-        "stock": 45,
-        "image_url": "/static/images/products/product-014.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Cucumber",
-        "description": "Crisp English cucumber.",
-        "price": 0.99,
-        "stock": 40,
-        "image_url": "/static/images/products/product-015.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Lettuce",
-        "description": "Fresh iceberg lettuce.",
-        "price": 1.00,
-        "stock": 30,
-        "image_url": "/static/images/products/product-016.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Spinach",
-        "description": "Fresh baby spinach leaves.",
-        "price": 1.70,
-        "stock": 25,
-        "image_url": "/static/images/products/product-017.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Onions",
-        "description": "Brown cooking onions.",
-        "price": 1.20,
-        "stock": 55,
-        "image_url": "/static/images/products/product-018.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Garlic",
-        "description": "Fresh garlic bulbs.",
-        "price": 0.80,
-        "stock": 40,
-        "image_url": "/static/images/products/product-019.jpg",
-        "category_id": "vegetables"
-    },
-    {
-        "name": "Peppers",
-        "description": "Mixed bell peppers.",
-        "price": 2.30,
-        "stock": 35,
-        "image_url": "/static/images/products/product-020.jpg",
-        "category_id": "vegetables"
-    },
+class OrderItemCreate(OrderItemBase):
+    pass
 
+class OrderItemResponse(OrderItemBase):
+    id: int
+    product: ProductResponse
 
-    # ----------
-    # DIARY
-    # ----------
-        {
-        "name": "Whole Milk",
-        "description": "Fresh local whole milk.",
-        "price": 1.30,
-        "stock": 60,
-        "image_url": "/static/images/products/product-021.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Semi‑Skimmed Milk",
-        "description": "Locally produced semi‑skimmed milk.",
-        "price": 1.20,
-        "stock": 55,
-        "image_url": "/static/images/products/product-022.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Cheddar Cheese",
-        "description": "Mature cheddar cheese block.",
-        "price": 2.50,
-        "stock": 30,
-        "image_url": "/static/images/products/product-023.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Butter",
-        "description": "Creamy salted butter.",
-        "price": 1.80,
-        "stock": 40,
-        "image_url": "/static/images/products/product-024.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Greek Yogurt",
-        "description": "Thick natural Greek yogurt.",
-        "price": 1.50,
-        "stock": 35,
-        "image_url": "/static/images/products/product-025.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Fresh Cream",
-        "description": "Locally sourced double cream.",
-        "price": 1.40,
-        "stock": 25,
-        "image_url": "/static/images/products/product-026.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Cottage Cheese",
-        "description": "Low‑fat cottage cheese.",
-        "price": 1.60,
-        "stock": 20,
-        "image_url": "/static/images/products/product-027.jpg",
-        "category_id": "dairy"
-    },
-    {
-        "name": "Mozzarella",
-        "description": "Soft mozzarella ball.",
-        "price": 1.80,
-        "stock": 30,
-        "image_url": "/static/images/products/product-028.jpg",
-        "category_id": "dairy"
-    },
+    class Config:
+        orm_mode = True
+python
+class OrderBase(BaseModel):
+    status: str = "pending"
 
+class OrderCreate(OrderBase):
+    items: list[OrderItemCreate]
 
-    # ---------
-    # BAKERY
-    # ---------
-        {
-        "name": "White Bread Loaf",
-        "description": "Freshly baked white loaf.",
-        "price": 1.10,
-        "stock": 40,
-        "image_url": "/static/images/products/product-029.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Wholemeal Bread",
-        "description": "Healthy wholemeal loaf.",
-        "price": 1.20,
-        "stock": 35,
-        "image_url": "/static/images/products/product-030.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Croissants",
-        "description": "Buttery French croissants.",
-        "price": 2.50,
-        "stock": 25,
-        "image_url": "/static/images/products/product-031.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Muffins",
-        "description": "Fresh chocolate chip muffins.",
-        "price": 2.20,
-        "stock": 30,
-        "image_url": "/static/images/products/product-032.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Bagels",
-        "description": "Soft plain bagels.",
-        "price": 2.00,
-        "stock": 20,
-        "image_url": "/static/images/products/product-033.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Baguette",
-        "description": "Crispy French baguette.",
-        "price": 1.30,
-        "stock": 25,
-        "image_url": "/static/images/products/product-034.jpg",
-        "category_id": "bakery"
-    },
-    {
-        "name": "Cinnamon Rolls",
-        "description": "Sweet cinnamon pastries.",
-        "price": 2.80,
-        "stock": 20,
-        "image_url": "/static/images/products/product-035.jpg",
-        "category_id": "bakery"
-    },
+class OrderResponse(OrderBase):
+    id: int
+    user_id: int
+    items: list[OrderItemResponse]
 
-
-    # ---------
-    # DRINKS
-    # ---------
-        {
-        "name": "Orange Juice",
-        "description": "Freshly squeezed orange juice.",
-        "price": 2.00,
-        "stock": 30,
-        "image_url": "/static/images/products/product-036.jpg",
-        "category_id": "drinks"
-    },
-    {
-        "name": "Apple Juice",
-        "description": "Pure pressed apple juice.",
-        "price": 1.80,
-        "stock": 25,
-        "image_url": "/static/images/products/product-037.jpg",
-        "category_id": "drinks"
-    },
-    {
-        "name": "Spring Water",
-        "description": "Natural spring water bottle.",
-        "price": 0.80,
-        "stock": 60,
-        "image_url": "/static/images/products/product-038.jpg",
-        "category_id": "drinks"
-    },
-    {
-        "name": "Lemonade",
-        "description": "Refreshing homemade lemonade.",
-        "price": 1.50,
-        "stock": 20,
-        "image_url": "/static/images/products/product-039.jpg",
-        "category_id": "drinks"
-    },
-    {
-        "name": "Iced Tea",
-        "description": "Cold brewed iced tea.",
-        "price": 1.70,
-        "stock": 20,
-        "image_url": "/static/images/products/product-040.jpg",
-        "category_id": "drinks"
-    },
-
-
-    # ---------
-    # PANTRY
-    # ---------
-        {
-        "name": "Local Honey",
-        "description": "Raw honey from local beekeepers.",
-        "price": 3.50,
-        "stock": 20,
-        "image_url": "/static/images/products/product-041.jpg",
-        "category_id": "pantry"
-    },
-    {
-        "name": "Strawberry Jam",
-        "description": "Homemade strawberry jam.",
-        "price": 2.80,
-        "stock": 25,
-        "image_url": "/static/images/products/product-042.jpg",
-        "category_id": "pantry"
-    },
-    {
-        "name": "Free‑Range Eggs",
-        "description": "Box of 6 free‑range eggs.",
-        "price": 1.90,
-        "stock": 40,
-        "image_url": "/static/images/products/product-043.jpg",
-        "category_id": "pantry"
-    },
-    {
-        "name": "Flour",
-        "description": "Locally milled plain flour.",
-        "price": 1.20,
-        "stock": 30,
-        "image_url": "/static/images/products/product-044.jpg",
-        "category_id": "pantry"
-    },
-    {
-        "name": "Brown Sugar",
-        "description": "Soft dark brown sugar.",
-        "price": 1.10,
-        "stock": 35,
-        "image_url": "/static/images/products/product-045.jpg",
-        "category_id": "pantry"
-    }
-]
-
-
-for p in products:
-    db.add(Product(**p))
-
-db.commit()
-db.close()
-
-
-### JWT
-from datetime import datetime, timedelta, timezone
-from jose import jwt, JWTError, ExpiredSignatureError
-from app.config.settings import settings
-
-
-# Create Token
-def create_token(data: dict, expires_delta: timedelta, secret_key: str) -> str:
-    now = datetime.now(timezone.utc)
-    to_encode = {
-        "sub": data.get("sub"), # Subject (UserId)
-        "iat": now, # Issued at
-        "nbf": now, # Not before
-        "exp": now + expires_delta # Expiration
-    }
-    return jwt.encode(to_encode, secret_key, algorithm = settings.APP_ALGORITHM)
-
-
-# Creates access token
-def create_access_token(user_id: str) -> str:
-    return create_token(
-        data={"sub": user_id},
-        expires_delta = timedelta(minutes = settings.APP_ACCESS_TOKEN_EXPIRE_MINUTES),
-        secret_key = settings.APP_ACCESS_TOKEN_SECRET_KEY
-    )
-
-
-# creates refresh token
-def create_refresh_token(user_id: str) -> str:
-    return create_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(days = settings.APP_REFRESH_TOKEN_EXPIRE_DAYS),
-        secret_key = settings.APP_REFRESH_TOKEN_SECRET_KEY
-    )
-
-
-# verify access token
-def verify_access_token(token: str):
-    try:
-        payload = jwt.decode(
-            token,
-            settings.APP_ACCESS_TOKEN_SECRET_KEY,
-            algorithms = settings.APP_ALGORITHM
-        )
-        return payload  # contains sub, iat, nbf, exp
-    except ExpiredSignatureError:
-        return None  # token expired
-    except JWTError:
-        return None  # invalid token
-
-
-# Verify refresh token
-def verify_refresh_token(token: str):
-    try:
-        payload = jwt.decode(
-            token,
-            settings.APP_REFRESH_TOKEN_SECRET_KEY,
-            algorithms = settings.APP_ALGORITHM
-        )
-        return payload
-    except ExpiredSignatureError:
-        return None
-    except JWTError:
-        return None
-
+    class Config:
+        orm_mode = True
