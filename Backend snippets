@@ -561,3 +561,69 @@ for p in products:
 db.commit()
 db.close()
 
+
+### JWT
+from datetime import datetime, timedelta, timezone
+from jose import jwt, JWTError, ExpiredSignatureError
+from app.config.settings import settings
+
+
+# Create Token
+def create_token(data: dict, expires_delta: timedelta, secret_key: str) -> str:
+    now = datetime.now(timezone.utc)
+    to_encode = {
+        "sub": data.get("sub"), # Subject (UserId)
+        "iat": now, # Issued at
+        "nbf": now, # Not before
+        "exp": now + expires_delta # Expiration
+    }
+    return jwt.encode(to_encode, secret_key, algorithm = settings.APP_ALGORITHM)
+
+
+# Creates access token
+def create_access_token(user_id: str) -> str:
+    return create_token(
+        data={"sub": user_id},
+        expires_delta = timedelta(minutes = settings.APP_ACCESS_TOKEN_EXPIRE_MINUTES),
+        secret_key = settings.APP_ACCESS_TOKEN_SECRET_KEY
+    )
+
+
+# creates refresh token
+def create_refresh_token(user_id: str) -> str:
+    return create_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(days = settings.APP_REFRESH_TOKEN_EXPIRE_DAYS),
+        secret_key = settings.APP_REFRESH_TOKEN_SECRET_KEY
+    )
+
+
+# verify access token
+def verify_access_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.APP_ACCESS_TOKEN_SECRET_KEY,
+            algorithms = settings.APP_ALGORITHM
+        )
+        return payload  # contains sub, iat, nbf, exp
+    except ExpiredSignatureError:
+        return None  # token expired
+    except JWTError:
+        return None  # invalid token
+
+
+# Verify refresh token
+def verify_refresh_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.APP_REFRESH_TOKEN_SECRET_KEY,
+            algorithms = settings.APP_ALGORITHM
+        )
+        return payload
+    except ExpiredSignatureError:
+        return None
+    except JWTError:
+        return None
+
