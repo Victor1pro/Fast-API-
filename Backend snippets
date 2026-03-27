@@ -1,53 +1,141 @@
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
-from models import User
-from schemas import UserCreate
-from database import get_db
-from utils import hash_password
+### SQL TABLES
+PRAGMA foreign_keys = ON;
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
+/* || USER TABLE */
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    hashed_password TEXT NOT NULL,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 
-@router.post("/register")
-def register_user(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if email exists
-    existing = db.query(User).filter(User.email == user.email).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already exists")
+CREATE INDEX idx_users_email ON users(email);
 
-    # Hash password
-    hashed_pw = hash_password(user.password)
 
-    # Create user
-    new_user = User(
-        email=user.email,
-        password=hashed_pw,
-        full_name=user.full_name
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
+/* || CATEGORY */
+CREATE TABLE categories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL
+);
 
-    # Redirect to login page
-    return RedirectResponse(url="/auth/login", status_code=303)
+CREATE INDEX idx_categories_name ON categories(name);
 
-from utils import verify_password
-from fastapi.responses import RedirectResponse
 
-@router.post("/login")
-def login_user(user: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.email == user.email).first()
+/* || ADDRESS TABLE */
+CREATE TABLE addresses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    line1 TEXT NOT NULL,
+    city TEXT NOT NULL,
+    postal_code TEXT NOT NULL,
+    country TEXT NOT NULL,
 
-    if not db_user:
-        raise HTTPException(status_code=400, detail="Invalid email or password")
+    FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
 
-    if not verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=400, detail="Invalid email or password")
+CREATE INDEX idx_addresses_user_id ON addresses(user_id);
 
-    # Normally you'd generate a JWT here
-    # token = create_access_token({"sub": db_user.email})
 
-    return {"message": "Login successful"}
+/* || CART TABLE */
+CREATE TABLE carts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_carts_user_id ON carts(user_id);
+
+
+/* || PRODUCT TABLE */
+CREATE TABLE products (
+    id TEXT PRIMARY KEY,
+    image_url TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    price REAL NOT NULL,
+    stock INTEGER DEFAULT 0,
+    category_id TEXT NOT NULL,
+
+    FOREIGN KEY (category_id)
+        REFERENCES categories(id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_products_name ON products(name);
+CREATE INDEX idx_products_category_id ON products(category_id);
+
+
+/* || CART ITEMS TABLE */
+CREATE TABLE cart_items (
+    id TEXT PRIMARY KEY,
+    cart_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    quantity INTEGER DEFAULT 1,
+
+    FOREIGN KEY (cart_id)
+        REFERENCES carts(id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (product_id)
+        REFERENCES products(id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_cart_items_cart_id ON cart_items(cart_id);
+CREATE INDEX idx_cart_items_product_id ON cart_items(product_id);
+
+
+/* || ORDER TABLE */
+CREATE TABLE orders (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    total_amount REAL NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_orders_user_id ON orders(user_id);
+
+
+/* || ORDER ITEMS */
+CREATE TABLE order_items (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    product_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL,
+    price_at_purchase REAL NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (order_id)
+        REFERENCES orders(id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (product_id)
+        REFERENCES products(id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_order_items_order_id ON order_items(order_id);
+CREATE INDEX idx_order_items_product_id ON order_items(product_id);
+
+
+
+
 
 ### Naming convnetions
 📦 1. Products Router
