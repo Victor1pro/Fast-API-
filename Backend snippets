@@ -1,51 +1,1208 @@
-# Backend Snippets 
-## app/database.py
-### database.py 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from app.config.settings import settings
+# BACKEND SNIPPETS
 
-# Base class for ORM modles
-class Base(DeclarativeBase):
-    pass
-# Database Engine
-if settings.APP_DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        settings.APP_DATABASE_URL,
-        connect_args={"check_same_thread": False},  # Required for SQLite
-        future=True
+## app
+
+### app/config
+#### sec.py
+import secrets
+
+print('ACCESS_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
+print('REFRESH_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
+
+#### settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    APP_DATABASE_URL: str
+    APP_ALGORITHM: str
+
+    APP_ACCESS_TOKEN_SECRET_KEY: str
+    APP_REFRESH_TOKEN_SECRET_KEY: str
+
+    APP_REFRESH_TOKEN_EXPIRE_DAYS: int
+    APP_ACCESS_TOKEN_EXPIRE_MINUTES: int
+    APP_SESSION_EXPIRE_MINUTES: int
+    APP_SESSION_EXPIRE_DAYS: int
+
+    APP_ENVIRONMENT: str = "development"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8"
     )
-else:
-    engine = create_engine(
-        settings.APP_DATABASE_URL,
-        future=True
+
+settings = Settings()
+
+
+### app/core
+#### auth.py
+# app/core/auth.py
+from fastapi import Request, HTTPException, status, Depends, Header
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.models.user_model import User
+from app.utils.jwt_handler import verify_access_token
+
+
+# STRICT DEPENDENCY
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    # 1. Try Authorization header
+    auth_header = request.headers.get("Authorization")
+
+    token = None
+
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+
+    # 2. Fallback to cookie
+    if token is None:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token"
+        )
+
+    # 3. Validate token
+    payload = verify_access_token(token)
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing user ID"
+        )
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found"
+        )
+
+    return user
+
+
+# SOFT DEPENDENCY
+def optional_user(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    db: Session = Depends(get_db)
+):
+    token = None
+
+    # TEST IF COOKIES IS SENT IN THE RIGHT & ACCESSED IN THE RIGHT FORMAT
+    print("COOKIES:", request.cookies)
+
+    # 1. Authorization header
+    if authorization:
+        parts = authorization.split(" ")
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+
+    # 2. Cookie fallback
+    if token is None:
+        token = request.cookies.get("access_token")
+
+    if not token:
+        return None
+
+    payload = verify_access_token(token)
+    if not payload:
+        return None
+
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    
+    return db.query(User).filter(User.id == user_id).first()
+
+
+### app/middlewares
+
+#### auth_middleware.py
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from app.utils.jwt_handler import verify_access_token
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        public_paths = [
+            "/auth/users/login",
+            "/auth/users/register",
+            "/docs",
+            "/openapi.json"
+        ]
+
+        if request.url.path in public_paths:
+            return await call_next(request)
+
+        access_token = request.cookies.get("access_token")
+
+        if not access_token:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing access token cookie"}
+            )
+
+        try:
+            payload = verify_access_token(access_token)
+            request.state.user = payload
+        except Exception:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired token"}
+            )
+
+        return await call_next(request)
+
+#### error_handler.py
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import status
+
+class ErrorHandlerMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as e:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "Internal server error", "error": str(e)}
+            )
+
+#### logging_middleware.py
+import time
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+
+        response = await call_next(request)
+
+        process_time = round((time.time() - start) * 1000, 2)
+
+        print(
+            f"[LOG] {request.method} {request.url.path} "
+            f"Status: {response.status_code} "
+            f"Time: {process_time}ms"
+        )
+
+        return response
+
+#### timing_middleware.py
+import time
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration = time.perf_counter() - start
+
+        response.headers["X-Process-Time"] = str(round(duration, 5))
+        return response
+
+### app/models
+
+#### cart_model.py
+import uuid
+from datetime import datetime
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, ForeignKey, TIMESTAMP, Integer
+from sqlalchemy.sql import func
+from app.database import Base
+
+class Cart(Base):
+    __tablename__ = "carts"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-# Session Factory
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
+
+    # Null for guest carts
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
+
+    # Token stored in browser for guests
+    guest_token: Mapped[str | None] = mapped_column(
+        String(100), unique=True, nullable=True, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now()
+    )
+
+    items: Mapped[list["CartItem"]] = relationship(
+        "CartItem",
+        back_populates="cart",
+        cascade="all, delete-orphan"
+    )
+
+class CartItem(Base):
+    __tablename__ = "cart_items"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    cart_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("carts.id"), index=True
+    )
+
+    product_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("products.id"), index=True
+    )
+
+    quantity: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )
+
+    cart: Mapped["Cart"] = relationship("Cart", back_populates="items")
+    product = relationship("Product")  # Add back_populates if Product has it
+
+
+#### order_model.py
+import uuid
+from datetime import datetime
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import String, Float, Integer, ForeignKey, func, TIMESTAMP, Text
+from app.database import Base
+
+
+# -------------------------
+# Order
+# -------------------------
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), index=True
+    )
+
+    total_amount: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    items: Mapped[list["OrderItem"]] = relationship(
+        "OrderItem", back_populates="order"
+    )
+
+    tracking_updates: Mapped[list["Tracking"]] = relationship(
+        "Tracking",
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+    shipping: Mapped["Shipping"] = relationship("Shipping", back_populates="order", uselist=False)
+
+
+# -------------------------
+# OrderItem
+# -------------------------
+class OrderItem(Base):
+    __tablename__ = "order_items"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orders.id"), index=True
+    )
+
+    product_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("products.id"), index=True
+    )
+
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Better than Float for money
+    price_at_purchase: Mapped[float] = mapped_column(Float, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now()
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="items")
+    product = relationship("Product")  # Add back_populates if Product has it
+
+
+# -------------------------
+# Tracking
+# -------------------------
+class Tracking(Base):
+    __tablename__ = "tracking"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    order_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    status: Mapped[str] = mapped_column(Text, default="processing", nullable=False)
+    location: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    order: Mapped["Order"] = relationship("Order", back_populates="tracking_updates")
+
+
+# -------------------------
+# Shipping
+# -------------------------
+class Shipping(Base):
+    __tablename__ = "shipping"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    order_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("orders.id"), nullable=False, index=True
+    )
+
+    full_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    address_line1: Mapped[str] = mapped_column(String(200), nullable=False)
+    address_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    postcode: Mapped[str] = mapped_column(String(20), nullable=False)
+    country: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    shipping_method: Mapped[str] = mapped_column(String(50), nullable=False)
+    shipping_cost: Mapped[float] = mapped_column(Float, nullable=False)
+
+    tracking_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="Pending")
+
+    order: Mapped["Order"] = relationship("Order", back_populates="shipping")
+
+
+#### product_model.py
+from sqlalchemy import String, Float, Integer, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.database import Base
+import uuid
+
+
+# Table for Product
+import uuid
+from datetime import datetime
+from sqlalchemy import String, Float, Integer, ForeignKey, TIMESTAMP
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
+from app.database import Base
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    image_url: Mapped[str] = mapped_column(String(300), nullable=False)
+    name: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+
+    stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    category_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("categories.id"), index=True
+    )
+
+    category: Mapped["Category"] = relationship("Category", back_populates="products")
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now()
+    )
+
+
+
+# Table for Catergory
+class Category(Base):
+    __tablename__ = "categories"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(100), unique=True, index=True, nullable=False
+    )
+
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    products: Mapped[list["Product"]] = relationship(
+        "Product", back_populates="category"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now()
+    )
+
+#### user_model.py
+import uuid
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, Boolean, ForeignKey, func, TIMESTAMP
+from app.database import Base
+
+
+# Table for user
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+# Table for User Address
+class Address(Base):
+    __tablename__ = "addresses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    line1: Mapped[str] = mapped_column(String(255), nullable=False)
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    postal_code: Mapped[str] = mapped_column(String(20), nullable=False)
+    country: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+### app/router
+
+#### auth_router.py
+from fastapi import APIRouter, Depends, status, Response, Cookie
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.schemas.user_schema import UserCreate, UserResponse, UserLogin, TokenResponse
+from app.service.auth_service import (register_user_service, login_user_service, logout_user_service)
+
+
+# CREATES A ROUTE FOR AUTHENTICATION
+router = APIRouter(
+    prefix="/auth/users",
+    tags=["Authentication"]
 )
-# Dependency for FastAPI
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
-## app/utils
-### hashing.py
+
+# REGISTER USER ROUTE
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def register_user(payload: UserCreate, db: Session = Depends(get_db)):
+    return register_user_service(payload, db)
+
+
+# LOGIN USER ROUTE
+@router.post("/login", response_model=TokenResponse, status_code=status.HTTP_202_ACCEPTED)
+def login_user(payload: UserLogin, response: Response, db: Session = Depends(get_db), guest_token: str | None = Cookie(default = None)):
+    return login_user_service(payload, db, response, guest_token)
+
+
+# LOGOUT USER ROUTE
+@router.post("/logout")
+def logout_user(response: Response):
+    return logout_user_service(response)
+
+
+#### cart_router.py
+from fastapi import APIRouter, Depends, Cookie, Response
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.schemas.cart_schema import CartItemCreate, CartItemUpdate, CartItemResponse, CartResponse
+from app.service import cart_service
+from app.core.auth import optional_user
+
+router = APIRouter(prefix="/cart", tags=["Cart"])
+
+
+@router.get("/", response_model=CartResponse)
+def get_cart(
+    db: Session = Depends(get_db),
+    user = Depends(optional_user),
+    guest_token: str | None = Cookie(default=None)
+):
+    cart = cart_service.get_cart(db, user, guest_token)
+    response = CartResponse.model_validate(cart)
+
+    if hasattr(cart, "new_guest_token"):
+        res = Response(content=response.model_dump_json(), media_type="application/json")
+        res.set_cookie(
+            key="guest_token",
+            value=cart.new_guest_token,
+            httponly=True,
+            samesite="lax",
+            secure = False,
+            path="/"
+        )
+        return res
+
+    return response
+
+
+@router.post("/items", response_model=CartItemResponse)
+def add_item(
+    item: CartItemCreate,
+    db: Session = Depends(get_db),
+    user = Depends(optional_user),
+    guest_token: str | None = Cookie(default=None)
+):
+    cart_item, cart = cart_service.add_to_cart(db, user, guest_token, item)
+    response = CartItemResponse.model_validate(cart_item)
+
+    if hasattr(cart, "new_guest_token"):
+        res = Response(
+            content=response.model_dump_json(),
+            media_type="application/json"
+        )
+        res.set_cookie(
+            key="guest_token",
+            value=cart.new_guest_token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            path="/"
+        )
+        return res
+
+    return response
+
+
+@router.patch("/items/{item_id}", response_model=CartItemResponse)
+def update_item(
+    item_id: str,
+    data: CartItemUpdate,
+    db: Session = Depends(get_db),
+    user = Depends(optional_user),
+    guest_token: str | None = Cookie(default=None)
+):
+    return cart_service.update_cart_item(db, user, guest_token, item_id, data)
+
+
+@router.delete("/items/{item_id}")
+def remove_item(
+    item_id: str,
+    db: Session = Depends(get_db),
+    user = Depends(optional_user),
+    guest_token: str | None = Cookie(default=None)
+):
+    cart_service.remove_item(db, user, guest_token, item_id)
+    return {"message": "Item removed"}
+
+
+@router.delete("/clear")
+def clear_cart(
+    db: Session = Depends(get_db),
+    user = Depends(optional_user),
+    guest_token: str | None = Cookie(default=None)
+):
+    cart_service.clear_cart(db, user, guest_token)
+    return {"message": "Cart cleared"}
+
+
+#### catergory_router.py
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/test/read-catergories-json")
+def test_read_catergories_json():
+    import json
+    from pathlib import Path
+
+    path = Path("catergory.json")
+    data = json.loads(path.read_text())
+
+    return {"count": len(data), "sample": data[:2]}
+
+
+#### checkout_router.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.core.auth import get_current_user
+from app.schemas.order_schema import OrderResponse
+from app.service import checkout_service
+
+
+# CREATES A ROUTE
+router = APIRouter(prefix="/checkout", tags=["Checkout"])
+
+
+@router.post("/", response_model = OrderResponse)
+def checkout(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    """CONVERTS THE CURRNET USER CART INTO AN ORDER"""
+    # REQUIRES AUTHENTICATION
+    # FAILS IF CART IS EMPTY
+
+    return checkout_service.checkout(db, user)
+
+
+#### order_router.py
+# app/routers/order_router.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.core.auth import get_current_user
+from app.schemas.order_schema import OrderResponse
+from app.service.order_service import get_order_history
+
+
+# CREATE ROUTE FOR ORDER
+router = APIRouter(prefix="/orders", tags=["Orders"])
+
+
+@router.get("/history", response_model = list[OrderResponse])
+def order_history(db: Session = Depends(get_db), user = Depends(get_current_user)):
+    return get_order_history(db, user)
+
+
+### app/schema
+
+#### user_schema.py
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, UUID4
+from datetime import datetime
+from typing import Optional
+
+# USER BASE SCHEMA
+class UserBase(BaseModel):
+    email: EmailStr
+    name: str
+
+
+# USER CREATE REQUEST SCHEMA
+class UserCreate(UserBase):
+    password: str = Field(min_length = 12, max_length = 16)
+
+
+# USER LOGIN REQUEST SCHEMA
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+# USER RESPONSE SCHEMA
+class UserResponse(UserBase):
+    id: UUID4
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    is_active: bool = True
+
+    model_config = ConfigDict(
+        from_attributes = True
+    )
+
+
+# TOKEN SCHEMA
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+#### product_schema.py
+from pydantic import BaseModel, ConfigDict
+from typing import Optional
+from datetime import datetime
+
+class ProductBase(BaseModel):
+    name: str
+    description: str
+    price: float
+    stock: int
+    image_url: str
+    category_id: str
+
+
+class ProductCreate(ProductBase):
+    id: str  # UUID string from your JSON
+
+
+class ProductResponse(ProductBase):
+    id: str
+    created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes = True
+    )
+
+
+# CATERGORY SCHEMA
+class CategoryBase(BaseModel):
+    name: str
+    description: str
+
+
+class CategoryCreate(CategoryBase):
+    id: str  # "fruit", "dairy", etc.
+
+
+class CategoryResponse(CategoryBase):
+    id: str
+    created_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes = True
+    )
+
+
+#### order_schema.py
+# app/schemas/order_schema.py
+from pydantic import BaseModel, ConfigDict
+from datetime import datetime
+
+
+class OrderItemResponse(BaseModel):
+    id: str
+    product_id: str
+    quantity: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrderResponse(BaseModel):
+    id: str
+    user_id: str
+    status: str
+    created_at: datetime
+    items: list[OrderItemResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+#### cart_schema.py
+from pydantic import BaseModel, ConfigDict
+
+class CartItemBase(BaseModel):
+    product_id: str
+    quantity: int = 1
+
+
+class CartItemCreate(CartItemBase):
+    pass
+
+
+class CartItemUpdate(BaseModel):
+    quantity: int
+
+class CartTotals(BaseModel):
+    subtotal: int
+    item_count: int
+
+
+
+class CartItemResponse(BaseModel):
+    id: str
+    product_id: str
+    quantity: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CartResponse(BaseModel):
+    id: str
+    user_id: str | None = None
+    guest_token: str | None = None
+    items: list[CartItemResponse]
+    totals: CartTotals | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+### app/service
+
+#### auth_service.py
+from sqlalchemy.orm import Session
+from app.models.user_model import User
+from app.utils.hashing import PasswordHasher
+from app.utils.jwt_handler import create_access_token, create_refresh_token
+from app.service.cart_service import merge_guest_cart
+from fastapi import HTTPException, status, Response
+
+
+def register_user_service(payload, db: Session):
+    existing_user = db.query(User).filter(User.email == payload.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    new_user = User(
+        name=payload.name,
+        email=payload.email,
+        hashed_password=PasswordHasher.hash_password(payload.password)
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return new_user
+
+
+def login_user_service(payload, db: Session, response: Response, guest_token: str | None):
+    user = db.query(User).filter(User.email == payload.email).first()
+
+    if not user or not PasswordHasher.verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password"
+        )
+
+    # -------------------------
+    # MERGE GUEST CART → USER CART
+    # -------------------------
+    if guest_token:
+        merge_guest_cart(db, user.id, guest_token)
+
+    # -------------------------
+    # DELETE GUEST COOKIE
+    # -------------------------
+    response.delete_cookie(
+        key="guest_token",
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=False
+    )
+
+    # -------------------------
+    # CREATE TOKENS
+    # -------------------------
+    access_token = create_access_token(str(user.id))
+    refresh_token = create_refresh_token(str(user.id))
+
+    # -------------------------
+    # SET ACCESS TOKEN COOKIE
+    # -------------------------
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=60 * 15
+    )
+
+    # -------------------------
+    # SET REFRESH TOKEN COOKIE
+    # -------------------------
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7
+    )
+
+    return {
+        "message": "Login Successful",
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
+
+
+# ------------------------
+# LOGOUT SERVICE
+# ------------------------
+def logout_user_service(response: Response):
+
+    # ACCESS TOKEN COOKIE
+    response.delete_cookie(
+        key = "access_token",
+        httponly = True,
+        secure = False,
+        samesite = "strict"
+    )
+
+
+    # REFRESH TOKEN COOKIE
+    response.delete_cookie(
+        key = "refresh_token",
+        httponly = True,
+        secure = False,
+        samesite = "strict"
+    )
+
+    return {"message": "Logged out successfully"}
+
+#### cart_service.py
+import uuid
+from sqlalchemy.orm import Session
+from fastapi import HTTPException
+from app.models.cart_model import Cart, CartItem
+from app.schemas.cart_schema import CartItemCreate, CartItemUpdate
+
+
+# -----------------------------
+# Automatic cart selection
+# -----------------------------
+def get_or_create_cart(db: Session, user=None, guest_token=None):
+    # 1. Logged-in user → always use their cart
+    if user:
+        cart = db.query(Cart).filter(Cart.user_id == user.id).first()
+        if cart:
+            return cart
+
+        # Create a new cart for the user
+        cart = Cart(user_id=user.id)
+        db.add(cart)
+        db.commit()
+        db.refresh(cart)
+        return cart
+
+    # 2. Guest with existing token → load their cart
+    if guest_token:
+        cart = db.query(Cart).filter(Cart.guest_token == guest_token).first()
+        if cart:
+            return cart
+
+    # 3. No user and no valid guest token → create new guest cart
+    new_token = str(uuid.uuid4())
+    cart = Cart(guest_token=new_token)
+    db.add(cart)
+    db.commit()
+    db.refresh(cart)
+
+    # Attach token so router can set cookie
+    cart.new_guest_token = new_token
+
+    return cart
+
+
+# -----------------------------
+# Get cart
+# -----------------------------
+def get_cart(db: Session, user=None, guest_token=None):
+    cart = get_or_create_cart(db, user, guest_token)
+    return cart
+
+
+# -----------------------------
+# Add item to cart
+# -----------------------------
+def add_to_cart(db: Session, user, guest_token, item: CartItemCreate):
+    cart = get_or_create_cart(db, user, guest_token)
+
+    existing = (
+        db.query(CartItem)
+        .filter(CartItem.cart_id == cart.id, CartItem.product_id == item.product_id)
+        .first()
+    )
+
+    if existing:
+        existing.quantity += item.quantity
+        db.commit()
+        db.refresh(existing)
+        return existing, cart
+
+    new_item = CartItem(
+        cart_id=cart.id,
+        product_id=item.product_id,
+        quantity=item.quantity
+    )
+
+    db.add(new_item)
+    db.commit()
+    db.refresh(new_item)
+    return new_item, cart
+
+
+# -----------------------------
+# Update cart item
+# -----------------------------
+def update_cart_item(db: Session, user, guest_token, item_id: str, data: CartItemUpdate):
+    cart = get_or_create_cart(db, user, guest_token)
+
+    item = (
+        db.query(CartItem)
+        .filter(CartItem.id == item_id, CartItem.cart_id == cart.id)
+        .first()
+    )
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+
+    item.quantity = data.quantity
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+# -----------------------------
+# Remove item
+# -----------------------------
+def remove_item(db: Session, user, guest_token, item_id: str):
+    cart = get_or_create_cart(db, user, guest_token)
+
+    item = (
+        db.query(CartItem)
+        .filter(CartItem.id == item_id, CartItem.cart_id == cart.id)
+        .first()
+    )
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+
+    db.delete(item)
+    db.commit()
+
+
+# -----------------------------
+# Clear cart
+# -----------------------------
+def clear_cart(db: Session, user, guest_token):
+    cart = get_or_create_cart(db, user, guest_token)
+
+    db.query(CartItem).filter(CartItem.cart_id == cart.id).delete()
+    db.commit()
+
+
+# -----------------------------
+# MERGE CART
+# -----------------------------
+def merge_guest_cart(db: Session, user_id: str, guest_token: str):
+    guest_cart = db.query(Cart).filter(Cart.guest_token == guest_token).first()
+    user_cart = db.query(Cart).filter(Cart.user_id == user_id).first()
+
+    if not guest_cart:
+        return
+
+    # If user has no cart yet, convert guest cart into user cart
+    if not user_cart:
+        guest_cart.user_id = user_id
+        guest_cart.guest_token = None
+        db.commit()
+        return
+
+    # Merge items
+    for item in guest_cart.items:
+        existing = db.query(CartItem).filter(
+            CartItem.cart_id == user_cart.id,
+            CartItem.product_id == item.product_id
+        ).first()
+
+        if existing:
+            existing.quantity += item.quantity
+        else:
+            item.cart_id = user_cart.id
+
+    # Remove old guest cart
+    db.delete(guest_cart)
+    db.commit()
+
+
+#### checkout_service.py
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+from app.models.cart_model import CartItem, Cart
+from app.models.order_model import Order, OrderItem
+
+
+def checkout(db: Session, user):
+
+    # GET THE USER CART
+    cart = db.query(Cart).filter(Cart.user_id == user.id).first()
+
+    if not cart or not cart.items:
+        raise HTTPException(
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail = "Cart is empty"
+        )
+    
+    # CREATE AN ORDER
+    order = Order(
+        user_id = user.id,
+        status = "pending" # Later: "Paid", "Shipped"
+    )
+    db.add(order)
+    db.flush() # Gt order.id without full commit yet
+
+
+    # CREATE ORDER ITEMS FROM CART ITEMS
+    for cart_item in cart.items:
+        order_item = OrderItem(
+            order_id = order.id,
+            product_id = cart_item.product_id,
+            quantity = cart_item.quantity
+        )
+        db.add(order_item)
+
+    
+    # Clear the cart
+    db.query(CartItem).filter(CartItem.cart_id == cart.id).delete()
+
+    # COMMIT EVERYTHING
+    db.commit()
+    db.refresh(order)
+
+    return order
+
+
+#### order_service.py
+# app/service/order_service.py
+from sqlalchemy.orm import Session
+from app.models.order_model import  Order
+
+
+def get_order_history(db: Session, user):
+    return (
+        db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
+    )
+
+
+### app/utils
+
+#### hashing.py
 # This library enables encryption of data
 from passlib.context import CryptContext 
-# Defines the hashing algorithm which is argon2
+
+# Defines the hashing algorithm which is bcrypt
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto") 
+
 class PasswordHasher:
     # Hash Password
     @staticmethod
     def hash_password(password: str) -> str:
         """Hash a plain user password using bcrypt"""
         return pwd_context.hash(password)
+    
     @staticmethod
     # Verify user password
     def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -53,20 +1210,24 @@ class PasswordHasher:
         return pwd_context.verify(plain_password, hashed_password)
 
 
-### jwt_handler.py
+#### jwt_handler.py
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError, ExpiredSignatureError
 from app.config.settings import settings
+
+
 # Create Token
 def create_token(data: dict, expires_delta: timedelta, secret_key: str) -> str:
     now = datetime.now(timezone.utc)
     to_encode = {
-        "sub": data.get("sub"), # Subject (UserId)
+        "sub": data["sub"], # Subject (UserId)
         "iat": now, # Issued at
         "nbf": now, # Not before
         "exp": now + expires_delta # Expiration
     }
     return jwt.encode(to_encode, secret_key, algorithm = settings.APP_ALGORITHM)
+
+
 # Creates access token
 def create_access_token(user_id: str) -> str:
     return create_token(
@@ -74,6 +1235,8 @@ def create_access_token(user_id: str) -> str:
         expires_delta = timedelta(minutes = settings.APP_ACCESS_TOKEN_EXPIRE_MINUTES),
         secret_key = settings.APP_ACCESS_TOKEN_SECRET_KEY
     )
+
+
 # creates refresh token
 def create_refresh_token(user_id: str) -> str:
     return create_token(
@@ -81,6 +1244,8 @@ def create_refresh_token(user_id: str) -> str:
         expires_delta=timedelta(days = settings.APP_REFRESH_TOKEN_EXPIRE_DAYS),
         secret_key = settings.APP_REFRESH_TOKEN_SECRET_KEY
     )
+
+
 # verify access token
 def verify_access_token(token: str):
     try:
@@ -94,6 +1259,8 @@ def verify_access_token(token: str):
         return None  # token expired
     except JWTError:
         return None  # invalid token
+
+
 # Verify refresh token
 def verify_refresh_token(token: str):
     try:
@@ -108,52 +1275,559 @@ def verify_refresh_token(token: str):
     except JWTError:
         return None
 
-## .env
+
+### app/main.py
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
+from app.database import Base, engine
+
+
+# IMPORT ALL MIDDLEWARE
+from app.middlewares.auth_middleware import AuthMiddleware
+from app.middlewares.error_handler import ErrorHandlerMiddleware
+from app.middlewares.logging_middleware import LoggingMiddleware
+from app.middlewares.timing_middleware import TimingMiddleware
+
+
+# IMPORT ALL MODELS HERE
+from app.models.user_model import User
+from app.models.product_model import Product, Category
+from app.models.cart_model import Cart, CartItem
+from app.models.order_model import Order, OrderItem, Shipping, Tracking
+
+# CREATE TABLES HERE
+Base.metadata.create_all(bind=engine)
+
+# IMPORT ALL ROUTERS HERE
+from app.routers import auth_router, cart_router, checkout_router, order_router, catergory_router, payment_router
+
+app = FastAPI()
+
+
+# APP CORS MIDDLEWARE
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins = [
+        "http://127.0.0.1:5500",
+        "http://localhost:5500"
+    ],
+    allow_credentials = True,
+    allow_methods = ["*"],
+    allow_headers = ["*"],
+)
+
+# ADD MIDDLEWARE PATH
+app.add_middleware(ErrorHandlerMiddleware)
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(TimingMiddleware)
+app.add_middleware(AuthMiddleware)
+
+
+# ADD ROUTERS PATH
+app.include_router(auth_router.router)
+app.include_router(cart_router.router)
+app.include_router(checkout_router.router)
+app.include_router(order_router.router)
+app.include_router(catergory_router.router)
+app.include_router(payment_router.router)
+
+
+### app/database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from app.config.settings import settings
+
+# Base class for ORM modles
+class Base(DeclarativeBase):
+    pass
+
+
+# Database Engine
+if settings.APP_DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        settings.APP_DATABASE_URL,
+        connect_args={"check_same_thread": False},  # Required for SQLite
+        future=True
+    )
+else:
+    engine = create_engine(
+        settings.APP_DATABASE_URL,
+        future=True
+    )
+
+
+# Session Factory
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+
+# Dependency for FastAPI
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+### .env
 # Database URL (sqlite3 for development, Postgres for production)
 APP_DATABASE_URL = "sqlite:///./GLH.db"
+
 # APP ENCODING & DECODING ALGORITHM
 APP_ALGORITHM = "HS256"
+
 # APP JWT TOKEN SECRET KEY
 APP_ACCESS_TOKEN_SECRET_KEY = ""
 APP_REFRESH_TOKEN_SECRET_KEY = ""
+
 # APP JWT TOKEN EXPIRATION
 APP_ACCESS_TOKEN_EXPIRE_MINUTES = 15
 APP_REFRESH_TOKEN_EXPIRE_DAYS = 30
+
 # APP SESSION EXPIRATION
 APP_SESSION_EXPIRE_MINUTES = 15
 APP_SESSION_EXPIRE_DAYS = 30
+
 # APP ENVIRONMENT
 APP_ENVIRONMENT = "development"
 
 
-## app/config
-### sec.py
-import secrets
-print('ACCESS_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
-print('REFRESH_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
+### seed/products.json
+[
+    {
+        "id": "1f2f1249-0470-46fb-a1a6-33c83a477f31",
+        "name": "Fresh Strawberries",
+        "description": "Locally grown sweet strawberries.",
+        "price": 3.50,
+        "stock": 40,
+        "image_url": "/static/images/products/product-001.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "1c723ea9-9ae7-4577-850e-8708395d62f4",
+        "name": "Bananas",
+        "description": "Organic ripe bananas.",
+        "price": 1.20,
+        "stock": 60,
+        "image_url": "/static/images/products/product-002.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "b5a038fd-c08c-4d5f-83c1-b364bfbbc8b2",
+        "name": "Watermelon",
+        "description": "Large juicy watermelon.",
+        "price": 4.99,
+        "stock": 20,
+        "image_url": "/static/images/products/product-003.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "6243ec23-1d30-4c24-95fd-30d0b070d851",
+        "name": "Blueberries",
+        "description": "Fresh hand‑picked blueberries.",
+        "price": 2.99,
+        "stock": 35,
+        "image_url": "/static/images/products/product-004.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "f37cc261-6263-4f2f-be23-6b5401ea6bcd",
+        "name": "Apples",
+        "description": "Crisp red apples.",
+        "price": 1.80,
+        "stock": 50,
+        "image_url": "/static/images/products/product-005.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "1895cc03-e80f-4b50-b039-0f4898496702",
+        "name": "Pears",
+        "description": "Sweet conference pears.",
+        "price": 1.60,
+        "stock": 30,
+        "image_url": "/static/images/products/product-006.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "68060956-468f-4b9a-b219-f32994dd8b2a",
+        "name": "Oranges",
+        "description": "Juicy seedless oranges.",
+        "price": 2.20,
+        "stock": 45,
+        "image_url": "/static/images/products/product-007.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "afe66b6b-0803-4902-9a21-7962ee6f411e",
+        "name": "Grapes",
+        "description": "Fresh green grapes.",
+        "price": 2.50,
+        "stock": 40,
+        "image_url": "/static/images/products/product-008.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "9cb4ce69-b9fd-4db0-bd9a-46b1f41bcaa5",
+        "name": "Pineapple",
+        "description": "Sweet tropical pineapple.",
+        "price": 3.20,
+        "stock": 25,
+        "image_url": "/static/images/products/product-009.jpg",
+        "category_id": "fruit"
+    },
+    {
+        "id": "c3589def-876c-45ea-9184-598557257b5c",
+        "name": "Mango",
+        "description": "Ripe juicy mango.",
+        "price": 2.80,
+        "stock": 30,
+        "image_url": "/static/images/products/product-010.jpg",
+        "category_id": "fruit"
+    },
 
-### settings.py
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class Settings(BaseSettings):
-    APP_DATABASE_URL: str
-    APP_ALGORITHM: str
-    APP_ACCESS_TOKEN_SECRET_KEY: str
-    APP_REFRESH_TOKEN_SECRET_KEY: str
-    APP_REFRESH_TOKEN_EXPIRE_DAYS: int
-    APP_ACCESS_TOKEN_EXPIRE_MINUTES: int
-    APP_SESSION_EXPIRE_MINUTES: int
-    APP_SESSION_EXPIRE_DAYS: int
-    APP_ENVIRONMENT: str = "development"
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8"
-    )
-settings = Settings()
 
 
-## app/core
-### auth.py
+    {
+        "id": "b003af23-f548-4a87-ad70-9b2b355e8ab2",
+        "name": "Carrots",
+        "description": "Crunchy locally grown carrots.",
+        "price": 1.10,
+        "stock": 50,
+        "image_url": "/static/images/products/product-011.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "eda477c1-2291-4f5d-9737-efbd2aa3564f",
+        "name": "Potatoes",
+        "description": "Fresh white potatoes.",
+        "price": 1.50,
+        "stock": 70,
+        "image_url": "/static/images/products/product-012.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "9093ab39-650f-4c37-94b7-33ac3432a785",
+        "name": "Broccoli",
+        "description": "Fresh green broccoli.",
+        "price": 1.40,
+        "stock": 35,
+        "image_url": "/static/images/products/product-013.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "30d4cdcb-0cd4-4eec-8e7d-5e101bbfcca7",
+        "name": "Tomatoes",
+        "description": "Vine‑ripened tomatoes.",
+        "price": 1.90,
+        "stock": 45,
+        "image_url": "/static/images/products/product-014.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "eb0f9aee-7216-40c0-a57c-f88bcd1fd15e",
+        "name": "Cucumber",
+        "description": "Crisp English cucumber.",
+        "price": 0.99,
+        "stock": 40,
+        "image_url": "/static/images/products/product-015.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "36928303-e50c-481d-9b7c-4357033d2d76",
+        "name": "Lettuce",
+        "description": "Fresh iceberg lettuce.",
+        "price": 1.00,
+        "stock": 30,
+        "image_url": "/static/images/products/product-016.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "fc9a67d6-5023-4c57-b323-385dcf56c5b9",
+        "name": "Spinach",
+        "description": "Fresh baby spinach leaves.",
+        "price": 1.70,
+        "stock": 25,
+        "image_url": "/static/images/products/product-017.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "172ddfb1-9932-4c7a-b4cc-0cc38c147bd9",
+        "name": "Onions",
+        "description": "Brown cooking onions.",
+        "price": 1.20,
+        "stock": 55,
+        "image_url": "/static/images/products/product-018.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "c4eda605-8d5e-45cb-8669-ade064f8b605",
+        "name": "Garlic",
+        "description": "Fresh garlic bulbs.",
+        "price": 0.80,
+        "stock": 40,
+        "image_url": "/static/images/products/product-019.jpg",
+        "category_id": "vegetables"
+    },
+    {
+        "id": "0409b496-f090-46ef-a836-325b3a190358",
+        "name": "Peppers",
+        "description": "Mixed bell peppers.",
+        "price": 2.30,
+        "stock": 35,
+        "image_url": "/static/images/products/product-020.jpg",
+        "category_id": "vegetables"
+    },
 
 
+    
+    {
+        "id": "1b0b15c7-f926-484d-b272-87bdffbae231",
+        "name": "Whole Milk",
+        "description": "Fresh local whole milk.",
+        "price": 1.30,
+        "stock": 60,
+        "image_url": "/static/images/products/product-021.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "078b04ee-9e50-457d-88da-d98c5b46b186",
+        "name": "Semi‑Skimmed Milk",
+        "description": "Locally produced semi‑skimmed milk.",
+        "price": 1.20,
+        "stock": 55,
+        "image_url": "/static/images/products/product-022.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "06503e51-929b-468c-aae8-0f609910c2aa",
+        "name": "Cheddar Cheese",
+        "description": "Mature cheddar cheese block.",
+        "price": 2.50,
+        "stock": 30,
+        "image_url": "/static/images/products/product-023.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "cff72cd4-8d25-480c-9f75-4164cf699f6d",
+        "name": "Butter",
+        "description": "Creamy salted butter.",
+        "price": 1.80,
+        "stock": 40,
+        "image_url": "/static/images/products/product-024.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "422c2581-5a22-4a6c-a157-b57c0fef441d",
+        "name": "Greek Yogurt",
+        "description": "Thick natural Greek yogurt.",
+        "price": 1.50,
+        "stock": 35,
+        "image_url": "/static/images/products/product-025.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "43ec7887-b222-43c1-a4b7-6785f6e11c0e",
+        "name": "Fresh Cream",
+        "description": "Locally sourced double cream.",
+        "price": 1.40,
+        "stock": 25,
+        "image_url": "/static/images/products/product-026.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "72605a0e-6ee8-4a36-bdbf-d0ac1cdb4ace",
+        "name": "Cottage Cheese",
+        "description": "Low‑fat cottage cheese.",
+        "price": 1.60,
+        "stock": 20,
+        "image_url": "/static/images/products/product-027.jpg",
+        "category_id": "dairy"
+    },
+    {
+        "id": "e6e409d6-8625-4828-ac13-66b8223fc21f",
+        "name": "Mozzarella",
+        "description": "Soft mozzarella ball.",
+        "price": 1.80,
+        "stock": 30,
+        "image_url": "/static/images/products/product-028.jpg",
+        "category_id": "dairy"
+    },
+
+
+    
+    {
+        "id": "b8b3a0bf-b935-434f-b227-d48134e37197",
+        "name": "White Bread Loaf",
+        "description": "Freshly baked white loaf.",
+        "price": 1.10,
+        "stock": 40,
+        "image_url": "/static/images/products/product-029.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "82fa61b6-5149-4722-b2bc-96cd449050c6",
+        "name": "Wholemeal Bread",
+        "description": "Healthy wholemeal loaf.",
+        "price": 1.20,
+        "stock": 35,
+        "image_url": "/static/images/products/product-030.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "83a58bdd-e1c9-48f6-99d9-39b9fa0421fc",
+        "name": "Croissants",
+        "description": "Buttery French croissants.",
+        "price": 2.50,
+        "stock": 25,
+        "image_url": "/static/images/products/product-031.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "1ac2a0a-deca-4686-b134-8c8bddd44642",
+        "name": "Muffins",
+        "description": "Fresh chocolate chip muffins.",
+        "price": 2.20,
+        "stock": 30,
+        "image_url": "/static/images/products/product-032.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "12e9e101-2246-461e-b2f8-f9806aa077e4",
+        "name": "Bagels",
+        "description": "Soft plain bagels.",
+        "price": 2.00,
+        "stock": 20,
+        "image_url": "/static/images/products/product-033.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "c19b4a74-509b-4c39-8525-61fe3477f0d3",
+        "name": "Baguette",
+        "description": "Crispy French baguette.",
+        "price": 1.30,
+        "stock": 25,
+        "image_url": "/static/images/products/product-034.jpg",
+        "category_id": "bakery"
+    },
+    {
+        "id": "7d6f66f9-9bcf-4439-afa0-ce948652dec9",
+        "name": "Cinnamon Rolls",
+        "description": "Sweet cinnamon pastries.",
+        "price": 2.80,
+        "stock": 20,
+        "image_url": "/static/images/products/product-035.jpg",
+        "category_id": "bakery"
+    },
+
+
+    
+    {
+        "id": "63f6bb22-f142-49b8-aacb-f19ba3964eb5",
+        "name": "Orange Juice",
+        "description": "Freshly squeezed orange juice.",
+        "price": 2.00,
+        "stock": 30,
+        "image_url": "/static/images/products/product-036.jpg",
+        "category_id": "drinks"
+    },
+    {
+        "id": "466e9733-cea7-4a3b-bf71-055e00c8302b",
+        "name": "Apple Juice",
+        "description": "Pure pressed apple juice.",
+        "price": 1.80,
+        "stock": 25,
+        "image_url": "/static/images/products/product-037.jpg",
+        "category_id": "drinks"
+    },
+    {
+        "id": "44666909-3b5a-4680-ad9b-1fce2c49556a",
+        "name": "Spring Water",
+        "description": "Natural spring water bottle.",
+        "price": 0.80,
+        "stock": 60,
+        "image_url": "/static/images/products/product-038.jpg",
+        "category_id": "drinks"
+    },
+    {
+        "id": "38f31716-d883-4ab3-acd0-477fdbd0c14b",
+        "name": "Lemonade",
+        "description": "Refreshing homemade lemonade.",
+        "price": 1.50,
+        "stock": 20,
+        "image_url": "/static/images/products/product-039.jpg",
+        "category_id": "drinks"
+    },
+    {
+        "id": "724b94d8-7a2a-486c-9a55-471c10050564",
+        "name": "Iced Tea",
+        "description": "Cold brewed iced tea.",
+        "price": 1.70,
+        "stock": 20,
+        "image_url": "/static/images/products/product-040.jpg",
+        "category_id": "drinks"
+    },
+
+
+    
+    {
+        "id": "933ec830-943f-49c8-824f-267f619c476f",
+        "name": "Local Honey",
+        "description": "Raw honey from local beekeepers.",
+        "price": 3.50,
+        "stock": 20,
+        "image_url": "/static/images/products/product-041.jpg",
+        "category_id": "pantry"
+    },
+    {
+        "id": "0de8939d-41f7-41bd-8255-0dedcd5c1f37",
+        "name": "Strawberry Jam",
+        "description": "Homemade strawberry jam.",
+        "price": 2.80,
+        "stock": 25,
+        "image_url": "/static/images/products/product-042.jpg",
+        "category_id": "pantry"
+    },
+    {
+        "id": "9b7522e2-5ca8-40d1-9b29-f8bfc200c22c",
+        "name": "Free‑Range Eggs",
+        "description": "Box of 6 free‑range eggs.",
+        "price": 1.90,
+        "stock": 40,
+        "image_url": "/static/images/products/product-043.jpg",
+        "category_id": "pantry"
+    },
+    {
+        "id": "ef16182c-12ea-491c-90f9-45b1345ceec1",
+        "name": "Flour",
+        "description": "Locally milled plain flour.",
+        "price": 1.20,
+        "stock": 30,
+        "image_url": "/static/images/products/product-044.jpg",
+        "category_id": "pantry"
+    },
+    {
+        "id": "f8cc5b57-74be-4e57-8007-0c18beee9342",
+        "name": "Brown Sugar",
+        "description": "Soft dark brown sugar.",
+        "price": 1.10,
+        "stock": 35,
+        "image_url": "/static/images/products/product-045.jpg",
+        "category_id": "pantry"
+    }
+]
+
+
+### seed/catergory.json
+[
+    {"id": "fruit", "name": "fruit", "description": "Freshly Picked fruits orm local farmers"},
+    {"id": "pantry", "name": "pantry", "description": "Locally sourced produces"},
+    {"id": "vegetables", "name": "vegetables", "description": "Freshly grown vegetables without fertilisers"},
+    {"id": "dairy", "name": "dairy", "description": "Diary from local farmers"},
+    {"id": "bakery", "name": "bakery", "description": "Locally sourced pstries and breads from our top notch bakers"},
+    {"id": "drinks", "name": "drinks", "description": "Drinks produces from local farmers"}
+]
 
