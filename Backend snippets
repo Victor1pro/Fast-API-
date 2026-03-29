@@ -1,236 +1,159 @@
-### SQL TABLES
-PRAGMA foreign_keys = ON;
+# Backend Snippets 
+## app/database.py
+### database.py 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from app.config.settings import settings
+
+# Base class for ORM modles
+class Base(DeclarativeBase):
+    pass
+# Database Engine
+if settings.APP_DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        settings.APP_DATABASE_URL,
+        connect_args={"check_same_thread": False},  # Required for SQLite
+        future=True
+    )
+else:
+    engine = create_engine(
+        settings.APP_DATABASE_URL,
+        future=True
+    )
+# Session Factory
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+# Dependency for FastAPI
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+## app/utils
+### hashing.py
+# This library enables encryption of data
+from passlib.context import CryptContext 
+# Defines the hashing algorithm which is argon2
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto") 
+class PasswordHasher:
+    # Hash Password
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash a plain user password using bcrypt"""
+        return pwd_context.hash(password)
+    @staticmethod
+    # Verify user password
+    def verify_password(plain_password: str, hashed_password: str) -> bool:
+        """Verify a plain password and compares it to hashed password"""
+        return pwd_context.verify(plain_password, hashed_password)
+
+
+### jwt_handler.py
+from datetime import datetime, timedelta, timezone
+from jose import jwt, JWTError, ExpiredSignatureError
+from app.config.settings import settings
+# Create Token
+def create_token(data: dict, expires_delta: timedelta, secret_key: str) -> str:
+    now = datetime.now(timezone.utc)
+    to_encode = {
+        "sub": data.get("sub"), # Subject (UserId)
+        "iat": now, # Issued at
+        "nbf": now, # Not before
+        "exp": now + expires_delta # Expiration
+    }
+    return jwt.encode(to_encode, secret_key, algorithm = settings.APP_ALGORITHM)
+# Creates access token
+def create_access_token(user_id: str) -> str:
+    return create_token(
+        data={"sub": user_id},
+        expires_delta = timedelta(minutes = settings.APP_ACCESS_TOKEN_EXPIRE_MINUTES),
+        secret_key = settings.APP_ACCESS_TOKEN_SECRET_KEY
+    )
+# creates refresh token
+def create_refresh_token(user_id: str) -> str:
+    return create_token(
+        data={"sub": user_id},
+        expires_delta=timedelta(days = settings.APP_REFRESH_TOKEN_EXPIRE_DAYS),
+        secret_key = settings.APP_REFRESH_TOKEN_SECRET_KEY
+    )
+# verify access token
+def verify_access_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.APP_ACCESS_TOKEN_SECRET_KEY,
+            algorithms = settings.APP_ALGORITHM
+        )
+        return payload  # contains sub, iat, nbf, exp
+    except ExpiredSignatureError:
+        return None  # token expired
+    except JWTError:
+        return None  # invalid token
+# Verify refresh token
+def verify_refresh_token(token: str):
+    try:
+        payload = jwt.decode(
+            token,
+            settings.APP_REFRESH_TOKEN_SECRET_KEY,
+            algorithms = settings.APP_ALGORITHM
+        )
+        return payload
+    except ExpiredSignatureError:
+        return None
+    except JWTError:
+        return None
+
+## .env
+# Database URL (sqlite3 for development, Postgres for production)
+APP_DATABASE_URL = "sqlite:///./GLH.db"
+# APP ENCODING & DECODING ALGORITHM
+APP_ALGORITHM = "HS256"
+# APP JWT TOKEN SECRET KEY
+APP_ACCESS_TOKEN_SECRET_KEY = ""
+APP_REFRESH_TOKEN_SECRET_KEY = ""
+# APP JWT TOKEN EXPIRATION
+APP_ACCESS_TOKEN_EXPIRE_MINUTES = 15
+APP_REFRESH_TOKEN_EXPIRE_DAYS = 30
+# APP SESSION EXPIRATION
+APP_SESSION_EXPIRE_MINUTES = 15
+APP_SESSION_EXPIRE_DAYS = 30
+# APP ENVIRONMENT
+APP_ENVIRONMENT = "development"
+
+
+## app/config
+### sec.py
+import secrets
+print('ACCESS_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
+print('REFRESH_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
+
+### settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    APP_DATABASE_URL: str
+    APP_ALGORITHM: str
+    APP_ACCESS_TOKEN_SECRET_KEY: str
+    APP_REFRESH_TOKEN_SECRET_KEY: str
+    APP_REFRESH_TOKEN_EXPIRE_DAYS: int
+    APP_ACCESS_TOKEN_EXPIRE_MINUTES: int
+    APP_SESSION_EXPIRE_MINUTES: int
+    APP_SESSION_EXPIRE_DAYS: int
+    APP_ENVIRONMENT: str = "development"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8"
+    )
+settings = Settings()
+
+
+## app/core
+### auth.py
 
-/* || USER TABLE */
-CREATE TABLE users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    hashed_password TEXT NOT NULL,
-    is_active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
 
-CREATE INDEX idx_users_email ON users(email);
 
-
-/* || CATEGORY */
-CREATE TABLE categories (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    description TEXT NOT NULL
-);
-
-CREATE INDEX idx_categories_name ON categories(name);
-
-
-/* || ADDRESS TABLE */
-CREATE TABLE addresses (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    line1 TEXT NOT NULL,
-    city TEXT NOT NULL,
-    postal_code TEXT NOT NULL,
-    country TEXT NOT NULL,
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX idx_addresses_user_id ON addresses(user_id);
-
-
-/* || CART TABLE */
-CREATE TABLE carts (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX idx_carts_user_id ON carts(user_id);
-
-
-/* || PRODUCT TABLE */
-CREATE TABLE products (
-    id TEXT PRIMARY KEY,
-    image_url TEXT NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL,
-    price REAL NOT NULL,
-    stock INTEGER DEFAULT 0,
-    category_id TEXT NOT NULL,
-
-    FOREIGN KEY (category_id)
-        REFERENCES categories(id)
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX idx_products_name ON products(name);
-CREATE INDEX idx_products_category_id ON products(category_id);
-
-
-/* || CART ITEMS TABLE */
-CREATE TABLE cart_items (
-    id TEXT PRIMARY KEY,
-    cart_id TEXT NOT NULL,
-    product_id TEXT NOT NULL,
-    quantity INTEGER DEFAULT 1,
-
-    FOREIGN KEY (cart_id)
-        REFERENCES carts(id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (product_id)
-        REFERENCES products(id)
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX idx_cart_items_cart_id ON cart_items(cart_id);
-CREATE INDEX idx_cart_items_product_id ON cart_items(product_id);
-
-
-/* || ORDER TABLE */
-CREATE TABLE orders (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    total_amount REAL NOT NULL,
-    status TEXT DEFAULT 'pending',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX idx_orders_user_id ON orders(user_id);
-
-
-/* || ORDER ITEMS */
-CREATE TABLE order_items (
-    id TEXT PRIMARY KEY,
-    order_id TEXT NOT NULL,
-    product_id TEXT NOT NULL,
-    quantity INTEGER NOT NULL,
-    price_at_purchase REAL NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (order_id)
-        REFERENCES orders(id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (product_id)
-        REFERENCES products(id)
-        ON DELETE RESTRICT
-);
-
-CREATE INDEX idx_order_items_order_id ON order_items(order_id);
-CREATE INDEX idx_order_items_product_id ON order_items(product_id);
-
-
-
-
-
-### Naming convnetions
-📦 1. Products Router
-Handles everything related to products.
-
-Common routes
-GET /products — list all products
-
-GET /products/{product_id} — get product details
-
-POST /products — create a new product
-
-PUT /products/{product_id} — update product
-
-DELETE /products/{product_id} — delete product
-
-GET /products/search — search by name, category, etc.
-
-GET /products/{product_id}/reviews — fetch reviews for a product
-
-🏷️ 2. Categories Router
-Useful for filtering and organizing products.
-
-Routes
-GET /categories
-
-POST /categories
-
-GET /categories/{category_id}
-
-PUT /categories/{category_id}
-
-DELETE /categories/{category_id}
-
-GET /categories/{category_id}/products
-
-👤 3. Users Router
-Handles user accounts.
-
-Routes
-POST /users/register
-
-POST /users/login
-
-GET /users/me — get current user
-
-PUT /users/me — update profile
-
-GET /users/{user_id} — admin only
-
-🛍️ 4. Cart Router
-Every user has a shopping cart.
-
-Routes
-GET /cart — get current user’s cart
-
-POST /cart/add — add item
-
-PUT /cart/update — change quantity
-
-DELETE /cart/remove/{item_id}
-
-DELETE /cart/clear
-
-💳 5. Orders Router
-Handles checkout and order history.
-
-Routes
-POST /orders — create order from cart
-
-GET /orders — list user’s orders
-
-GET /orders/{order_id}
-
-PUT /orders/{order_id}/status — admin updates status
-
-⭐ 6. Reviews Router
-Optional but common.
-
-Routes
-POST /reviews
-
-GET /reviews/{review_id}
-
-DELETE /reviews/{review_id}
-
-📦 7. Inventory Router (optional)
-If you want admin‑level stock management.
-
-Routes
-GET /inventory
-PUT /inventory/{product_id} — update stock
-
-    user_id: int
-    items: list[OrderItemResponse]
-
-    class Config:
-        orm_mode = True
