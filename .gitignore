@@ -2,3 +2,7 @@ __pycache__
 venv/
 .vscode
 fast
+# Dependecies
+# pip install fastapi[all] python-jose sqlalchemy passlib[argon2]
+# KILL UVICORN SERVER PROCESS
+# taskkill /F /IM uvicorn.exe
