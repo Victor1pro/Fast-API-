@@ -2,38 +2,6 @@
 
 ## app
 
-### app/config
-#### sec.py
-import secrets
-
-print('ACCESS_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
-print('REFRESH_TOKEN_SECRET_KEY: ', secrets.token_hex(64))
-
-#### settings.py
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class Settings(BaseSettings):
-    APP_DATABASE_URL: str
-    APP_ALGORITHM: str
-
-    APP_ACCESS_TOKEN_SECRET_KEY: str
-    APP_REFRESH_TOKEN_SECRET_KEY: str
-
-    APP_REFRESH_TOKEN_EXPIRE_DAYS: int
-    APP_ACCESS_TOKEN_EXPIRE_MINUTES: int
-    APP_SESSION_EXPIRE_MINUTES: int
-    APP_SESSION_EXPIRE_DAYS: int
-
-    APP_ENVIRONMENT: str = "development"
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8"
-    )
-
-settings = Settings()
-
-
 ### app/core
 #### auth.py
 # app/core/auth.py
