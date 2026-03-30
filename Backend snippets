@@ -1155,95 +1155,6 @@ def get_order_history(db: Session, user):
     )
 
 
-### app/utils
-
-#### hashing.py
-# This library enables encryption of data
-from passlib.context import CryptContext 
-
-# Defines the hashing algorithm which is bcrypt
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto") 
-
-class PasswordHasher:
-    # Hash Password
-    @staticmethod
-    def hash_password(password: str) -> str:
-        """Hash a plain user password using bcrypt"""
-        return pwd_context.hash(password)
-    
-    @staticmethod
-    # Verify user password
-    def verify_password(plain_password: str, hashed_password: str) -> bool:
-        """Verify a plain password and compares it to hashed password"""
-        return pwd_context.verify(plain_password, hashed_password)
-
-
-#### jwt_handler.py
-from datetime import datetime, timedelta, timezone
-from jose import jwt, JWTError, ExpiredSignatureError
-from app.config.settings import settings
-
-
-# Create Token
-def create_token(data: dict, expires_delta: timedelta, secret_key: str) -> str:
-    now = datetime.now(timezone.utc)
-    to_encode = {
-        "sub": data["sub"], # Subject (UserId)
-        "iat": now, # Issued at
-        "nbf": now, # Not before
-        "exp": now + expires_delta # Expiration
-    }
-    return jwt.encode(to_encode, secret_key, algorithm = settings.APP_ALGORITHM)
-
-
-# Creates access token
-def create_access_token(user_id: str) -> str:
-    return create_token(
-        data={"sub": user_id},
-        expires_delta = timedelta(minutes = settings.APP_ACCESS_TOKEN_EXPIRE_MINUTES),
-        secret_key = settings.APP_ACCESS_TOKEN_SECRET_KEY
-    )
-
-
-# creates refresh token
-def create_refresh_token(user_id: str) -> str:
-    return create_token(
-        data={"sub": user_id},
-        expires_delta=timedelta(days = settings.APP_REFRESH_TOKEN_EXPIRE_DAYS),
-        secret_key = settings.APP_REFRESH_TOKEN_SECRET_KEY
-    )
-
-
-# verify access token
-def verify_access_token(token: str):
-    try:
-        payload = jwt.decode(
-            token,
-            settings.APP_ACCESS_TOKEN_SECRET_KEY,
-            algorithms = settings.APP_ALGORITHM
-        )
-        return payload  # contains sub, iat, nbf, exp
-    except ExpiredSignatureError:
-        return None  # token expired
-    except JWTError:
-        return None  # invalid token
-
-
-# Verify refresh token
-def verify_refresh_token(token: str):
-    try:
-        payload = jwt.decode(
-            token,
-            settings.APP_REFRESH_TOKEN_SECRET_KEY,
-            algorithms = settings.APP_ALGORITHM
-        )
-        return payload
-    except ExpiredSignatureError:
-        return None
-    except JWTError:
-        return None
-
-
 ### app/main.py
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
@@ -1300,47 +1211,6 @@ app.include_router(catergory_router.router)
 app.include_router(payment_router.router)
 
 
-### app/database.py
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from app.config.settings import settings
-
-# Base class for ORM modles
-class Base(DeclarativeBase):
-    pass
-
-
-# Database Engine
-if settings.APP_DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        settings.APP_DATABASE_URL,
-        connect_args={"check_same_thread": False},  # Required for SQLite
-        future=True
-    )
-else:
-    engine = create_engine(
-        settings.APP_DATABASE_URL,
-        future=True
-    )
-
-
-# Session Factory
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
-
-
-# Dependency for FastAPI
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 ### .env
 # Database URL (sqlite3 for development, Postgres for production)
 APP_DATABASE_URL = "sqlite:///./GLH.db"
@@ -1372,7 +1242,7 @@ APP_ENVIRONMENT = "development"
         "description": "Locally grown sweet strawberries.",
         "price": 3.50,
         "stock": 40,
-        "image_url": "/static/images/products/product-001.jpg",
+        "image_url": "/static/assets/images/product-001.jpg",
         "category_id": "fruit"
     },
     {
@@ -1381,7 +1251,7 @@ APP_ENVIRONMENT = "development"
         "description": "Organic ripe bananas.",
         "price": 1.20,
         "stock": 60,
-        "image_url": "/static/images/products/product-002.jpg",
+        "image_url": "/static/assets/images/product-002.jpg",
         "category_id": "fruit"
     },
     {
@@ -1390,7 +1260,7 @@ APP_ENVIRONMENT = "development"
         "description": "Large juicy watermelon.",
         "price": 4.99,
         "stock": 20,
-        "image_url": "/static/images/products/product-003.jpg",
+        "image_url": "/static/assets/images/product-003.jpg",
         "category_id": "fruit"
     },
     {
@@ -1399,7 +1269,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh hand‑picked blueberries.",
         "price": 2.99,
         "stock": 35,
-        "image_url": "/static/images/products/product-004.jpg",
+        "image_url": "/static/assets/images/product-004.jpg",
         "category_id": "fruit"
     },
     {
@@ -1408,7 +1278,7 @@ APP_ENVIRONMENT = "development"
         "description": "Crisp red apples.",
         "price": 1.80,
         "stock": 50,
-        "image_url": "/static/images/products/product-005.jpg",
+        "image_url": "/static/assets/images/product-005.jpg",
         "category_id": "fruit"
     },
     {
@@ -1417,7 +1287,7 @@ APP_ENVIRONMENT = "development"
         "description": "Sweet conference pears.",
         "price": 1.60,
         "stock": 30,
-        "image_url": "/static/images/products/product-006.jpg",
+        "image_url": "/static/assets/images/product-006.jpg",
         "category_id": "fruit"
     },
     {
@@ -1426,7 +1296,7 @@ APP_ENVIRONMENT = "development"
         "description": "Juicy seedless oranges.",
         "price": 2.20,
         "stock": 45,
-        "image_url": "/static/images/products/product-007.jpg",
+        "image_url": "/static/assets/images/product-007.jpg",
         "category_id": "fruit"
     },
     {
@@ -1435,7 +1305,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh green grapes.",
         "price": 2.50,
         "stock": 40,
-        "image_url": "/static/images/products/product-008.jpg",
+        "image_url": "/static/assets/images/product-008.jpg",
         "category_id": "fruit"
     },
     {
@@ -1444,7 +1314,7 @@ APP_ENVIRONMENT = "development"
         "description": "Sweet tropical pineapple.",
         "price": 3.20,
         "stock": 25,
-        "image_url": "/static/images/products/product-009.jpg",
+        "image_url": "/static/assets/images/product-009.jpg",
         "category_id": "fruit"
     },
     {
@@ -1453,11 +1323,9 @@ APP_ENVIRONMENT = "development"
         "description": "Ripe juicy mango.",
         "price": 2.80,
         "stock": 30,
-        "image_url": "/static/images/products/product-010.jpg",
+        "image_url": "/static/assets/images/product-010.jpg",
         "category_id": "fruit"
     },
-
-
 
     {
         "id": "b003af23-f548-4a87-ad70-9b2b355e8ab2",
@@ -1465,7 +1333,7 @@ APP_ENVIRONMENT = "development"
         "description": "Crunchy locally grown carrots.",
         "price": 1.10,
         "stock": 50,
-        "image_url": "/static/images/products/product-011.jpg",
+        "image_url": "/static/assets/images/product-011.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1474,7 +1342,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh white potatoes.",
         "price": 1.50,
         "stock": 70,
-        "image_url": "/static/images/products/product-012.jpg",
+        "image_url": "/static/assets/images/product-012.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1483,7 +1351,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh green broccoli.",
         "price": 1.40,
         "stock": 35,
-        "image_url": "/static/images/products/product-013.jpg",
+        "image_url": "/static/assets/images/product-013.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1492,7 +1360,7 @@ APP_ENVIRONMENT = "development"
         "description": "Vine‑ripened tomatoes.",
         "price": 1.90,
         "stock": 45,
-        "image_url": "/static/images/products/product-014.jpg",
+        "image_url": "/static/assets/images/product-014.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1501,7 +1369,7 @@ APP_ENVIRONMENT = "development"
         "description": "Crisp English cucumber.",
         "price": 0.99,
         "stock": 40,
-        "image_url": "/static/images/products/product-015.jpg",
+        "image_url": "/static/assets/images/product-015.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1510,7 +1378,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh iceberg lettuce.",
         "price": 1.00,
         "stock": 30,
-        "image_url": "/static/images/products/product-016.jpg",
+        "image_url": "/static/assets/images/product-016.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1519,7 +1387,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh baby spinach leaves.",
         "price": 1.70,
         "stock": 25,
-        "image_url": "/static/images/products/product-017.jpg",
+        "image_url": "/static/assets/images/product-017.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1528,7 +1396,7 @@ APP_ENVIRONMENT = "development"
         "description": "Brown cooking onions.",
         "price": 1.20,
         "stock": 55,
-        "image_url": "/static/images/products/product-018.jpg",
+        "image_url": "/static/assets/images/product-018.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1537,7 +1405,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh garlic bulbs.",
         "price": 0.80,
         "stock": 40,
-        "image_url": "/static/images/products/product-019.jpg",
+        "image_url": "/static/assets/images/product-019.jpg",
         "category_id": "vegetables"
     },
     {
@@ -1546,19 +1414,18 @@ APP_ENVIRONMENT = "development"
         "description": "Mixed bell peppers.",
         "price": 2.30,
         "stock": 35,
-        "image_url": "/static/images/products/product-020.jpg",
+        "image_url": "/static/assets/images/product-020.jpg",
         "category_id": "vegetables"
     },
 
-
-    
+ 
     {
         "id": "1b0b15c7-f926-484d-b272-87bdffbae231",
         "name": "Whole Milk",
         "description": "Fresh local whole milk.",
         "price": 1.30,
         "stock": 60,
-        "image_url": "/static/images/products/product-021.jpg",
+        "image_url": "/static/assets/images/product-021.jpg",
         "category_id": "dairy"
     },
     {
@@ -1567,7 +1434,7 @@ APP_ENVIRONMENT = "development"
         "description": "Locally produced semi‑skimmed milk.",
         "price": 1.20,
         "stock": 55,
-        "image_url": "/static/images/products/product-022.jpg",
+        "image_url": "/static/assets/images/product-022.jpg",
         "category_id": "dairy"
     },
     {
@@ -1576,7 +1443,7 @@ APP_ENVIRONMENT = "development"
         "description": "Mature cheddar cheese block.",
         "price": 2.50,
         "stock": 30,
-        "image_url": "/static/images/products/product-023.jpg",
+        "image_url": "/static/assets/images/product-023.jpg",
         "category_id": "dairy"
     },
     {
@@ -1585,7 +1452,7 @@ APP_ENVIRONMENT = "development"
         "description": "Creamy salted butter.",
         "price": 1.80,
         "stock": 40,
-        "image_url": "/static/images/products/product-024.jpg",
+        "image_url": "/static/assets/images/product-024.jpg",
         "category_id": "dairy"
     },
     {
@@ -1594,7 +1461,7 @@ APP_ENVIRONMENT = "development"
         "description": "Thick natural Greek yogurt.",
         "price": 1.50,
         "stock": 35,
-        "image_url": "/static/images/products/product-025.jpg",
+        "image_url": "/static/assets/images/product-025.jpg",
         "category_id": "dairy"
     },
     {
@@ -1603,7 +1470,7 @@ APP_ENVIRONMENT = "development"
         "description": "Locally sourced double cream.",
         "price": 1.40,
         "stock": 25,
-        "image_url": "/static/images/products/product-026.jpg",
+        "image_url": "/static/assets/images/product-026.jpg",
         "category_id": "dairy"
     },
     {
@@ -1612,7 +1479,7 @@ APP_ENVIRONMENT = "development"
         "description": "Low‑fat cottage cheese.",
         "price": 1.60,
         "stock": 20,
-        "image_url": "/static/images/products/product-027.jpg",
+        "image_url": "/static/assets/images/product-027.jpg",
         "category_id": "dairy"
     },
     {
@@ -1621,19 +1488,18 @@ APP_ENVIRONMENT = "development"
         "description": "Soft mozzarella ball.",
         "price": 1.80,
         "stock": 30,
-        "image_url": "/static/images/products/product-028.jpg",
+        "image_url": "/static/assets/images/product-028.jpg",
         "category_id": "dairy"
     },
 
 
-    
     {
         "id": "b8b3a0bf-b935-434f-b227-d48134e37197",
         "name": "White Bread Loaf",
         "description": "Freshly baked white loaf.",
         "price": 1.10,
         "stock": 40,
-        "image_url": "/static/images/products/product-029.jpg",
+        "image_url": "/static/assets/images/product-029.jpg",
         "category_id": "bakery"
     },
     {
@@ -1642,7 +1508,7 @@ APP_ENVIRONMENT = "development"
         "description": "Healthy wholemeal loaf.",
         "price": 1.20,
         "stock": 35,
-        "image_url": "/static/images/products/product-030.jpg",
+        "image_url": "/static/assets/images/product-030.jpg",
         "category_id": "bakery"
     },
     {
@@ -1651,7 +1517,7 @@ APP_ENVIRONMENT = "development"
         "description": "Buttery French croissants.",
         "price": 2.50,
         "stock": 25,
-        "image_url": "/static/images/products/product-031.jpg",
+        "image_url": "/static/assets/images/product-031.jpg",
         "category_id": "bakery"
     },
     {
@@ -1660,7 +1526,7 @@ APP_ENVIRONMENT = "development"
         "description": "Fresh chocolate chip muffins.",
         "price": 2.20,
         "stock": 30,
-        "image_url": "/static/images/products/product-032.jpg",
+        "image_url": "/static/assets/images/product-032.jpg",
         "category_id": "bakery"
     },
     {
@@ -1669,7 +1535,7 @@ APP_ENVIRONMENT = "development"
         "description": "Soft plain bagels.",
         "price": 2.00,
         "stock": 20,
-        "image_url": "/static/images/products/product-033.jpg",
+        "image_url": "/static/assets/images/product-033.jpg",
         "category_id": "bakery"
     },
     {
@@ -1678,7 +1544,7 @@ APP_ENVIRONMENT = "development"
         "description": "Crispy French baguette.",
         "price": 1.30,
         "stock": 25,
-        "image_url": "/static/images/products/product-034.jpg",
+        "image_url": "/static/assets/images/product-034.jpg",
         "category_id": "bakery"
     },
     {
@@ -1687,10 +1553,9 @@ APP_ENVIRONMENT = "development"
         "description": "Sweet cinnamon pastries.",
         "price": 2.80,
         "stock": 20,
-        "image_url": "/static/images/products/product-035.jpg",
+        "image_url": "/static/assets/images/product-035.jpg",
         "category_id": "bakery"
     },
-
 
     
     {
@@ -1699,7 +1564,7 @@ APP_ENVIRONMENT = "development"
         "description": "Freshly squeezed orange juice.",
         "price": 2.00,
         "stock": 30,
-        "image_url": "/static/images/products/product-036.jpg",
+        "image_url": "/static/assets/images/product-036.jpg",
         "category_id": "drinks"
     },
     {
@@ -1708,7 +1573,7 @@ APP_ENVIRONMENT = "development"
         "description": "Pure pressed apple juice.",
         "price": 1.80,
         "stock": 25,
-        "image_url": "/static/images/products/product-037.jpg",
+        "image_url": "/static/assets/images/product-037.jpg",
         "category_id": "drinks"
     },
     {
@@ -1717,7 +1582,7 @@ APP_ENVIRONMENT = "development"
         "description": "Natural spring water bottle.",
         "price": 0.80,
         "stock": 60,
-        "image_url": "/static/images/products/product-038.jpg",
+        "image_url": "/static/assets/images/product-038.jpg",
         "category_id": "drinks"
     },
     {
@@ -1726,7 +1591,7 @@ APP_ENVIRONMENT = "development"
         "description": "Refreshing homemade lemonade.",
         "price": 1.50,
         "stock": 20,
-        "image_url": "/static/images/products/product-039.jpg",
+        "image_url": "/static/assets/images/product-039.jpg",
         "category_id": "drinks"
     },
     {
@@ -1735,19 +1600,18 @@ APP_ENVIRONMENT = "development"
         "description": "Cold brewed iced tea.",
         "price": 1.70,
         "stock": 20,
-        "image_url": "/static/images/products/product-040.jpg",
+        "image_url": "/static/assets/images/product-040.jpg",
         "category_id": "drinks"
     },
 
 
-    
     {
         "id": "933ec830-943f-49c8-824f-267f619c476f",
         "name": "Local Honey",
         "description": "Raw honey from local beekeepers.",
         "price": 3.50,
         "stock": 20,
-        "image_url": "/static/images/products/product-041.jpg",
+        "image_url": "/static/assets/images/product-041.jpg",
         "category_id": "pantry"
     },
     {
@@ -1756,7 +1620,7 @@ APP_ENVIRONMENT = "development"
         "description": "Homemade strawberry jam.",
         "price": 2.80,
         "stock": 25,
-        "image_url": "/static/images/products/product-042.jpg",
+        "image_url": "/static/assets/images/product-042.jpg",
         "category_id": "pantry"
     },
     {
@@ -1765,7 +1629,7 @@ APP_ENVIRONMENT = "development"
         "description": "Box of 6 free‑range eggs.",
         "price": 1.90,
         "stock": 40,
-        "image_url": "/static/images/products/product-043.jpg",
+        "image_url": "/static/assets/images/product-043.jpg",
         "category_id": "pantry"
     },
     {
@@ -1774,7 +1638,7 @@ APP_ENVIRONMENT = "development"
         "description": "Locally milled plain flour.",
         "price": 1.20,
         "stock": 30,
-        "image_url": "/static/images/products/product-044.jpg",
+        "image_url": "/static/assets/images/product-044.jpg",
         "category_id": "pantry"
     },
     {
@@ -1783,7 +1647,7 @@ APP_ENVIRONMENT = "development"
         "description": "Soft dark brown sugar.",
         "price": 1.10,
         "stock": 35,
-        "image_url": "/static/images/products/product-045.jpg",
+        "image_url": "/static/assets/images/product-045.jpg",
         "category_id": "pantry"
     }
 ]
