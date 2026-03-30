@@ -94,7 +94,6 @@ def optional_user(
     
     return db.query(User).filter(User.id == user_id).first()
 
-
 ### app/middlewares
 
 #### auth_middleware.py
@@ -133,6 +132,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             )
 
         return await call_next(request)
+
 
 #### error_handler.py
 from fastapi.responses import JSONResponse
@@ -194,6 +194,10 @@ from sqlalchemy import String, ForeignKey, TIMESTAMP, Integer
 from sqlalchemy.sql import func
 from app.database import Base
 
+
+# -------------------------
+# Cart
+# -------------------------
 class Cart(Base):
     __tablename__ = "carts"
 
@@ -221,6 +225,10 @@ class Cart(Base):
         cascade="all, delete-orphan"
     )
 
+
+# -------------------------
+# CartItem
+# -------------------------
 class CartItem(Base):
     __tablename__ = "cart_items"
 
@@ -241,7 +249,7 @@ class CartItem(Base):
     )
 
     cart: Mapped["Cart"] = relationship("Cart", back_populates="items")
-    product = relationship("Product")  # Add back_populates if Product has it
+    product = relationship("Product", back_populates="cart_items")  # Add back_populates if Product has it
 
 
 #### order_model.py
@@ -384,12 +392,14 @@ import uuid
 
 
 # Table for Product
+# Table for Product & Catergory
 import uuid
 from datetime import datetime
 from sqlalchemy import String, Float, Integer, ForeignKey, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from .cart_model import CartItem
 
 
 class Product(Base):
@@ -415,6 +425,11 @@ class Product(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now()
+    )
+
+    cart_items: Mapped[list["CartItem"]] = relationship(
+        "CartItem",
+        back_populates = "product"
     )
 
 
@@ -448,6 +463,13 @@ from sqlalchemy import String, Boolean, ForeignKey, func, TIMESTAMP
 from app.database import Base
 
 
+# Table for user (user_model.py)
+import uuid
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import String, Boolean, ForeignKey, func, TIMESTAMP
+from app.database import Base
+
+
 # Table for user
 class User(Base):
     __tablename__ = "users"
@@ -460,6 +482,8 @@ class User(Base):
 
     created_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now())
     updated_at: Mapped[str] = mapped_column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
 
 # Table for User Address
 class Address(Base):
@@ -508,6 +532,7 @@ def logout_user(response: Response):
     return logout_user_service(response)
 
 
+
 #### cart_router.py
 from fastapi import APIRouter, Depends, Cookie, Response
 from sqlalchemy.orm import Session
@@ -519,6 +544,7 @@ from app.core.auth import optional_user
 router = APIRouter(prefix="/cart", tags=["Cart"])
 
 
+# GET OR CREATE CART ROUTE
 @router.get("/", response_model=CartResponse)
 def get_cart(
     db: Session = Depends(get_db),
@@ -543,6 +569,7 @@ def get_cart(
     return response
 
 
+# ADD ITEM ROUTE
 @router.post("/items", response_model=CartItemResponse)
 def add_item(
     item: CartItemCreate,
@@ -571,6 +598,7 @@ def add_item(
     return response
 
 
+# UPDATE CART IETMS
 @router.patch("/items/{item_id}", response_model=CartItemResponse)
 def update_item(
     item_id: str,
@@ -582,6 +610,7 @@ def update_item(
     return cart_service.update_cart_item(db, user, guest_token, item_id, data)
 
 
+# DELETE CRAT ITEMS
 @router.delete("/items/{item_id}")
 def remove_item(
     item_id: str,
@@ -593,6 +622,7 @@ def remove_item(
     return {"message": "Item removed"}
 
 
+# DELET CART ROUTE
 @router.delete("/clear")
 def clear_cart(
     db: Session = Depends(get_db),
@@ -603,20 +633,45 @@ def clear_cart(
     return {"message": "Cart cleared"}
 
 
+# MERGE CART ROUTE
+@router.post("/merge")
+def merge_cart(
+    data: dict,
+    db: Session = Depends(get_db)
+):
+    user_id = data["user_id"]
+    guest_token = data["guest_token"]
+
+    cart_service.merge_guest_cart(db, user_id, guest_token)
+    return {"message": "Guest cart merged"}
+
+
+
 #### catergory_router.py
+
+
+#### product_router.py
 from fastapi import APIRouter
+from app.service.product_service import load_all_products, load_product_by_id
 
-router = APIRouter()
+# CREATE PRODUCTS ROUTE
+router = APIRouter(
+    prefix = "/products",
+    tags = ["Products"]
+)
 
-@router.get("/test/read-catergories-json")
-def test_read_catergories_json():
-    import json
-    from pathlib import Path
 
-    path = Path("catergory.json")
-    data = json.loads(path.read_text())
+# ROUTE TO GET ALL PRODUCTS
+@router.get("/")
+def get_products():
+    return load_all_products()
 
-    return {"count": len(data), "sample": data[:2]}
+
+# ROUTE TO GET ONE PRODUCT BY ID
+@router.get("/{product_id}")
+def get_product(product_id: str):
+    return load_product_by_id(product_id)
+
 
 
 #### checkout_router.py
@@ -642,6 +697,16 @@ def checkout(db: Session = Depends(get_db), user = Depends(get_current_user)):
 
 
 #### order_router.py
+# app/routers/order_router.py
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.core.auth import get_current_user
+from app.schemas.order_schema import OrderResponse
+from app.service.order_service import get_order_history
+
+
+# CREATE ROUTE FOR ORDER
 # app/routers/order_router.py
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -696,7 +761,7 @@ class UserResponse(UserBase):
     )
 
 
-# TOKEN SCHEMA
+# TOKEN SCHEMA (token_schema.py)
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -728,8 +793,6 @@ class ProductResponse(ProductBase):
         from_attributes = True
     )
 
-
-# CATERGORY SCHEMA
 class CategoryBase(BaseModel):
     name: str
     description: str
@@ -770,6 +833,7 @@ class OrderResponse(BaseModel):
     items: list[OrderItemResponse]
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 #### cart_schema.py
@@ -929,6 +993,7 @@ def logout_user_service(response: Response):
     )
 
     return {"message": "Logged out successfully"}
+
 
 #### cart_service.py
 import uuid
@@ -1120,7 +1185,7 @@ def checkout(db: Session, user):
         status = "pending" # Later: "Paid", "Shipped"
     )
     db.add(order)
-    db.flush() # Gt order.id without full commit yet
+    db.flush() # Get order.id without full commit yet
 
 
     # CREATE ORDER ITEMS FROM CART ITEMS
@@ -1143,6 +1208,7 @@ def checkout(db: Session, user):
     return order
 
 
+
 #### order_service.py
 # app/service/order_service.py
 from sqlalchemy.orm import Session
@@ -1153,6 +1219,40 @@ def get_order_history(db: Session, user):
     return (
         db.query(Order).filter(Order.user_id == user.id).order_by(Order.created_at.desc()).all()
     )
+
+
+### products_service.py
+import json
+from fastapi import HTTPException, status
+from pathlib import Path
+
+
+# INITIALISES JSON PATH TO PRODUCTS
+DATA_PATH = Path("seed/products.json")
+print(DATA_PATH)
+
+
+# GET ALL PRODUCTS
+def load_all_products():
+    """RETURN ALL PRODUCTS FROM THE JSON FILE"""
+    with open(DATA_PATH) as f:
+        return json.load(f)
+
+
+# GET SINGLE PRODUCT BY ID
+def load_product_by_id(product_id: str):
+    """RETURN A SINGLE PRODUCT BY ID"""
+    with open(DATA_PATH) as f:
+        products = json.load(f)
+
+    for product in products:
+        if product["id"] == product_id:
+            return product
+    
+    raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Product not found")
+
+
+
 
 
 ### app/main.py
@@ -1178,7 +1278,7 @@ from app.models.order_model import Order, OrderItem, Shipping, Tracking
 Base.metadata.create_all(bind=engine)
 
 # IMPORT ALL ROUTERS HERE
-from app.routers import auth_router, cart_router, checkout_router, order_router, catergory_router, payment_router
+from app.routers import auth_router, cart_router, checkout_router, order_router, catergory_router, payment_router, product_router
 
 app = FastAPI()
 
@@ -1209,29 +1309,7 @@ app.include_router(checkout_router.router)
 app.include_router(order_router.router)
 app.include_router(catergory_router.router)
 app.include_router(payment_router.router)
-
-
-### .env
-# Database URL (sqlite3 for development, Postgres for production)
-APP_DATABASE_URL = "sqlite:///./GLH.db"
-
-# APP ENCODING & DECODING ALGORITHM
-APP_ALGORITHM = "HS256"
-
-# APP JWT TOKEN SECRET KEY
-APP_ACCESS_TOKEN_SECRET_KEY = ""
-APP_REFRESH_TOKEN_SECRET_KEY = ""
-
-# APP JWT TOKEN EXPIRATION
-APP_ACCESS_TOKEN_EXPIRE_MINUTES = 15
-APP_REFRESH_TOKEN_EXPIRE_DAYS = 30
-
-# APP SESSION EXPIRATION
-APP_SESSION_EXPIRE_MINUTES = 15
-APP_SESSION_EXPIRE_DAYS = 30
-
-# APP ENVIRONMENT
-APP_ENVIRONMENT = "development"
+app.include_router(product_router.router)
 
 
 ### seed/products.json
