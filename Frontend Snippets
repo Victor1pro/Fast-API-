@@ -131,129 +131,6 @@
 - [ ] Headings
 
 
-# HTML 
-<header class="header">
-  <div class="logo-area">
-    <img src="logo.png" alt="Logo" class="logo">
-    <span class="brand-text">MyStore</span>
-  </div>
-
-  <div class="search-area">
-    <input type="text" placeholder="Search products..." class="search-input">
-    <button class="search-btn">Search</button>
-  </div>
-
-  <nav class="menu">
-    <a href="#" class="menu-link">Home</a>
-    <a href="#" class="menu-link">Deals</a>
-    <a href="#" class="menu-link">Account</a>
-  </nav>
-</header>
-
-
-# CSS SNippets
-/* Layout */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  background: #131921; /* Amazon dark blue */
-  color: white;
-}
-
-/* Logo + text */
-.logo-area {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logo {
-  width: 40px;
-  height: auto;
-}
-
-.brand-text {
-  font-size: 1.2rem;
-  font-weight: 600;
-}
-
-/* Search bar */
-.search-area {
-  display: flex;
-  flex: 1;
-  max-width: 600px;
-  margin: 0 20px;
-}
-
-.search-input {
-  flex: 1;
-  padding: 10px;
-  border: none;
-  border-radius: 4px 0 0 4px;
-  font-size: 1rem;
-}
-
-.search-btn {
-  padding: 10px 16px;
-  background: #febd69; /* Amazon yellow */
-  border: none;
-  border-radius: 0 4px 4px 0;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-/* Menu links */
-.menu {
-  display: flex;
-  gap: 20px;
-}
-
-.menu-link {
-  position: relative;
-  color: white;
-  text-decoration: none;
-  font-size: 1rem;
-}
-
-/* Animated underline */
-.menu-link::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: -3px;
-  width: 0%;
-  height: 2px;
-  background: #febd69;
-  transition: width 0.3s ease;
-}
-
-.menu-link:hover::after {
-  width: 100%;
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .header {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-
-  .search-area {
-    order: 3;
-    width: 100%;
-    margin: 0;
-  }
-
-  .menu {
-    order: 2;
-    width: 100%;
-    justify-content: center;
-  }
-}
-
-
 ### HEADER template
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 
@@ -885,6 +762,64 @@ input {
   text-decoration: underline;
 }
 
+
+### CHECKOUT.HTML
+<link rel="stylesheet" href="/css/base.css">
+
+<div class="container">
+  <h1 class="section-title">Checkout</h1>
+
+  <div class="card">
+    <h2>Shipping Details</h2>
+
+    <input id="name" placeholder="Full Name">
+    <input id="address" placeholder="Address">
+    <input id="city" placeholder="City">
+    <input id="postcode" placeholder="Postcode">
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <h2>Order Summary</h2>
+    <div id="checkout-summary"></div>
+    <p id="checkout-total" style="font-size: 1.2rem; font-weight: 600;"></p>
+  </div>
+
+  <button class="btn-primary" style="margin-top: 20px;" onclick="placeOrder()">
+    Place Order
+  </button>
+</div>
+
+<script src="/js/checkout.js"></script>
+
+
+
+
+## JAVASCRIPT TEMPLATE
+
+###auth_function.js
+// auth_functions.js
+
+// This file Validates user Credentails
+export function hasNoWhitespace(value) {
+  return !/\s/.test(value);
+}
+
+export function validateEmail(value) {
+  if (!hasNoWhitespace(value)) return false;
+  const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return pattern.test(value);
+}
+
+export function validatePassword(value) {
+  if (!hasNoWhitespace(value)) return false;
+  const pattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{12,16}$/;
+  return pattern.test(value);
+}
+
+export function validateUKPhone(phone) {
+  const pattern = /^(?:0|\+44)\d{10}$/;
+  return pattern.test(phone);
+}
 
 
 
