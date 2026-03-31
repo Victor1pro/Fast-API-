@@ -821,5 +821,111 @@ export function validateUKPhone(phone) {
   return pattern.test(phone);
 }
 
+### auth.js
+/* || AUTH API FUNCTIONS */
 
+export async function registerUser(name, email, password) {
+    const payload = { name, email, password };
+
+    try {
+        const response = await fetch("http://127.0.0.1:5000/auth/users/register", {
+            method: 'POST',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            alert("Error: " + errorData.detail);
+            return null;
+        }
+
+        return await response.json();
+
+    } catch (error) {
+        console.error("Network error:", error);
+        alert("Something went wrong. Please try again.");
+        return null;
+    }
+}
+
+
+export async function loginUser(email, password) {
+    try {
+        const response = await fetch("http://127.0.0.1:5000/auth/users/login", {
+            method: 'POST',
+            credentials: 'include',
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            alert(errorData.detail || "Login failed");
+            return null;
+        }
+
+        return true;
+
+    } catch (error) {
+        console.error("Login error:", error);
+        alert("Something went wrong. Please try again.");
+        return null;
+    }
+}
+
+### login.js
+import { loginUser } from "./auth.js";
+
+/* || LOGIN FLOW */
+const loginForm = document.getElementById('login-form');
+
+if (loginForm) {
+    loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+
+        if (!email || !password) {
+            alert("Email and password are required");
+            return;
+        }
+
+        const success = await loginUser(email, password);
+
+        if (success) {
+            alert("Login successful!");
+            window.location.href = "/shop.html";
+        }
+    });
+}
+
+### register.js
+import { registerUser } from "./auth.js";
+
+/* || REGISTRATION FLOW */
+const registerForm = document.getElementById('register-form');
+
+if (registerForm) {
+    registerForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const name = document.getElementById('name').value.trim();
+        const email = document.getElementById('email').value.trim();
+        const password = document.getElementById('password').value.trim();
+
+        if (!name || !email || !password) {
+            alert("All fields are required");
+            return;
+        }
+
+        const data = await registerUser(name, email, password);
+
+        if (data) {
+            alert("Registration successful! Welcome " + data.name);
+            window.location.href = "/pages/login.html";
+        }
+    });
+}
 
