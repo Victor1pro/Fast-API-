@@ -6,3 +6,4 @@ fast
 # pip install fastapi[all] python-jose sqlalchemy passlib[argon2]
 # KILL UVICORN SERVER PROCESS
 # taskkill /F /IM uvicorn.exe
+python -m uvicorn main:app --reload
